@@ -1,0 +1,151 @@
+{
+  "chapters": [
+    {
+      "id": "preparation",
+      "title": "前置准备",
+      "sections": [
+        {
+          "title": "背景知识：项目简介 — OpenBiliClaw 是什么？",
+          "anchor": "preparation-intro",
+          "difficulty": "beginner",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "**OpenBiliClaw** 是一个本地运行、跨平台的 AI 内容发现 Agent。它的核心思路与传统推荐系统完全相反：\n\n- **传统推荐**：平台站在内容与用户之间做匹配分发，优化目标是平台的（点击率、留存、广告收入），用户只是被优化的对象。\n- **OpenBiliClaw**：先从你的行为数据中构建深层心理画像（五层灵魂模型），再根据对你的理解，**主动跨平台**搜寻你可能喜欢的内容。\n\n它覆盖 **B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Bangumi** 八大平台，所有数据默认存储在本地 SQLite 文件中，LLM（Large Language Model，大语言模型——如 GPT-4、Claude、Gemini 等能理解和生成自然语言的 AI 模型）调用使用你自己的 API Key。\n\n### 项目规模\n\n| 指标 | 数值 |\n|------|------|\n| Python 源代码 | **167,360 行**（240 个文件） |\n| 测试代码 | **201,996 行**（313 个测试文件） |\n| 浏览器插件 | **178 个 TypeScript 文件** |\n| API 路由 | **132 个端点** |\n| 数据库表 | **44 张表** |\n| 灵魂引擎子模块 | **36 个** |\n| LLM Provider | **6 个**（OpenAI/Anthropic/Google/Ollama/DashScope/OpenRouter） |\n| 接入平台 | **8 个**（B站/小红书/抖音/YouTube/X/知乎/Reddit/Bangumi） |\n| 发现策略 | **7 种**（search/explore/trending/related_chain/x/youtube/douyin） |"
+            },
+            {
+              "type": "text",
+              "text": "**核心差异化优势**：\n\n1. **先懂你，再找内容**——通过五层灵魂画像（事件→偏好→觉察→洞察→灵魂）深度理解用户，而非简单匹配标签。\n2. **主动破茧**——基于心理学桥接逻辑，主动猜测你可能感兴趣但从未接触过的领域。猜对了升级为正式兴趣，猜错了安静退出。\n3. **100% 本地**——所有数据留在你硬盘上的 SQLite 文件里，没有云端，没有人能看到你的画像。\n4. **可调教**——喜欢、不感兴趣、聊天反馈都会改变后续推荐，像朋友一样告诉你为什么推荐。\n5. **自进化闭环**——推荐结果 → 用户反馈 → 画像更新 → 发现策略调整 → 更精准的推荐，形成持续优化的闭环。"
+            }
+          ]
+        },
+        {
+          "title": "技术栈概览",
+          "anchor": "preparation-tech-stack",
+          "difficulty": "beginner",
+          "estimatedMinutes": 5,
+          "blocks": [
+            {
+              "type": "table",
+              "table": {
+                "headers": [
+                  "层级",
+                  "技术选型",
+                  "选择理由",
+                  "关键指标"
+                ],
+                "rows": [
+                  [
+                    "Web 框架",
+                    "FastAPI + Uvicorn",
+                    "FastAPI 是一个高性能的 Python Web 框架——它帮你快速搭建「后端服务」，让你通过 URL 访问来获取数据、提交操作。Uvicorn 是运行 FastAPI 的服务器。支持 WebSocket（一种允许服务器主动推送消息给浏览器的网络协议）实时推送",
+                    "132 个 API 路由"
+                  ],
+                  [
+                    "CLI 工具",
+                    "Typer + Rich",
+                    "类型安全的 CLI 框架（让你通过命令行与程序交互），Rich 提供美观的终端输出",
+                    "13,000+ 行 CLI 代码"
+                  ],
+                  [
+                    "数据库",
+                    "SQLite (aiosqlite)",
+                    "零配置、本地优先，数据完全由用户掌控。SQLite 是一个嵌入式数据库引擎，所有数据存储在一个文件中",
+                    "44 张表，异步 I/O"
+                  ],
+                  [
+                    "LLM 接入",
+                    "OpenAI/Anthropic/Google/Ollama/DashScope/OpenRouter",
+                    "6 个 Provider，故障自动降级链",
+                    "5 级流量分类"
+                  ],
+                  [
+                    "向量嵌入",
+                    "Ollama (bge-m3) / DashScope",
+                    "本地或云端向量检索，用于话题去重和相似度",
+                    "384 维向量"
+                  ],
+                  [
+                    "浏览器自动化",
+                    "Playwright",
+                    "处理需要登录的平台（B站/小红书/抖音）",
+                    "8 个平台接入"
+                  ],
+                  [
+                    "配置管理",
+                    "TOML (tomllib)",
+                    "人类可读的配置文件格式，支持环境变量覆盖",
+                    "热重载支持"
+                  ],
+                  [
+                    "桌面打包",
+                    "PyInstaller + pystray",
+                    "macOS .dmg / Windows .exe 开箱即用安装包",
+                    "跨平台部署"
+                  ],
+                  [
+                    "类型检查",
+                    "MyPy (strict mode)",
+                    "严格的静态类型检查，保证代码质量",
+                    "162K 行类型注解"
+                  ],
+                  [
+                    "格式化/Lint",
+                    "Ruff",
+                    "极速的 Python linter + formatter",
+                    "300 个测试文件"
+                  ]
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "环境搭建与运行",
+          "anchor": "preparation-setup",
+          "difficulty": "beginner",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 开发环境准备\n\n```bash\n# 1. 克隆仓库\ngit clone https://github.com/whiteguo233/OpenBiliClaw.git\ncd OpenBiliClaw\n\n# 2. 创建虚拟环境并安装依赖\npython -m venv .venv\nsource .venv/bin/activate\npip install -e \".[dev]\"\n\n# 3. 复制配置文件\ncp config.example.toml config.toml\n# 编辑 config.toml，填入你的 LLM API Key\n\n# 4. 运行测试（352 个测试文件）\npytest\n\n# 5. 启动后端（监听 0.0.0.0:8420）\nopenbiliclaw start\n```"
+            },
+            {
+              "type": "text",
+              "text": "### 核心依赖说明\n\n项目的依赖分为几个层次：\n\n- **运行时核心**（`dependencies`）：httpx、FastAPI、Pydantic、websockets 等，所有用户都需要。\n- **本地 LLM**（`local-llm`）：ollama，用于本地向量嵌入。\n- **浏览器自动化**（`browser`）：playwright，用于需要登录的平台抓取。\n- **TLS 代理**（`tls`）：cryptography，用于 HTTPS 本地代理。\n- **桌面打包**（`packaging`）：PyInstaller + pystray，用于构建桌面安装包。\n- **开发工具**（`dev`）：pytest、ruff、mypy，开发阶段使用。\n- **评估框架**（`eval`）：claude-agent-sdk，用于自动化评估推荐质量。"
+            },
+            {
+              "type": "text",
+              "text": "### 配置文件结构\n\n`config.toml` 是系统的核心配置入口，主要段落：\n\n- `[general]`：语言、数据目录\n- `[api]`：后端监听地址、端口、密码门禁\n- `[llm]`：LLM Provider 配置、默认链路、并发控制（5 级流量分类）\n- `[llm.instances.<id>]`：每个 LLM 实例的独立配置（API Key、模型、Base URL）\n- `[llm.embedding]`：向量嵌入模型配置（bge-m3，384 维）\n- `[sources.<platform>]`：各平台数据源配置（8 个平台）\n- `[scheduler]`：后台任务调度配置（6 个独立循环）"
+            }
+          ]
+        },
+        {
+          "title": "项目入口与启动流程",
+          "anchor": "preparation-entry",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### CLI 入口：`cli.py`\n\n项目的 CLI 入口定义在 `pyproject.toml` 中：\n\n```toml\n[project.scripts]\nopenbiliclaw = \"openbiliclaw.cli:app\"\n```\n\n`cli.py` 是整个项目最长的文件（13,000+ 行），使用 **Typer** 框架构建 CLI。主要命令包括：\n\n- `openbiliclaw start` — 启动后端服务（监听 0.0.0.0:8420）\n- `openbiliclaw profile` — 查看用户画像（五层灵魂模型）\n- `openbiliclaw recommend` — 手动触发推荐（5 维评分）\n- `openbiliclaw config-show` — 查看当前配置\n- `openbiliclaw set-password` — 设置 API 密码（Rate Limiter：5 次失败/15 分钟锁定）"
+            },
+            {
+              "type": "text",
+              "text": "### 启动流程概览\n\n当执行 `openbiliclaw start` 时，系统会按以下顺序初始化：\n\n1. **加载配置** — 从 `config.toml` 读取所有配置，合并环境变量覆盖\n2. **初始化数据库** — 连接 SQLite（44 张表），执行必要的迁移\n3. **初始化 LLM 注册表** — 根据配置构建 6 个 LLM Provider 实例\n4. **启动 Embedding 服务** — 检查 Ollama 状态，必要时拉取 bge-m3 模型（384 维向量）\n5. **启动 FastAPI 服务** — 在 `0.0.0.0:8420` 监听 132 个 HTTP/WebSocket 端点\n6. **启动后台调度器** — APScheduler 启动 6 个独立定时任务循环\n7. **启动 Runtime 事件总线** — 为浏览器插件和 Web UI 提供实时状态推送"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TD\n    A[openbiliclaw start] --> B[config.py: 加载配置]\n    B --> C[storage/database.py: 初始化 SQLite 44 张表]\n    C --> D[llm/registry.py: 构建 6 个 LLM Provider]\n    D --> E[runtime/embedding_seed.py: 启动 bge-m3 384 维]\n    E --> F[api/app.py: 启动 132 个 API 路由]\n    F --> G[runtime/init_coordinator.py: 引导初始化]\n    G --> H[APScheduler: 启动 6 个后台循环]\n    H --> I[runtime/events.py: 启动事件总线]\n    I --> J[系统就绪，等待请求]",
+                "caption": "OpenBiliClaw 启动流程（量化版）"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

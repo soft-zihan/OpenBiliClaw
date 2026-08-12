@@ -1,0 +1,168 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：前端架构与收藏同步的设计挑战",
+          "anchor": "practice-web-saved-background",
+          "groupTitle": "Web UI & 收藏同步",
+          "difficulty": "beginner",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "OpenBiliClaw 的前端分为两个独立但协作的部分：**Web UI**（推荐展示界面）和**收藏同步**（跨平台内容管理）。它们解决的是两个不同的问题：\n\n- **Web UI**：如何把 AI 推荐的内容以最佳方式呈现给用户？\n- **收藏同步**：用户在不同平台收藏的内容如何统一管理？\n\n### 技术选型：为什么不用 React/Vue？\n\n项目的前端使用**纯 HTML/CSS/JS**，不依赖任何前端框架。这不是因为不了解现代前端，而是基于以下考量：\n\n1. **零构建**：不需要 Node.js、不需要打包工具、不需要 npm install。用户打开文件就能用\n2. **轻量**：前端代码量小（主要是数据展示），引入框架的 ROI 不高\n3. **桌面集成**：桌面端 Web 通过 PyInstaller 打包，纯 HTML 更容易嵌入\n4. **渐进增强**：核心功能通过 API 获取数据，JS 只负责渲染，即使 JS 禁用也能看到基本内容"
+            }
+          ]
+        },
+        {
+          "title": "Web UI 三入口：桌面端、移动端、初始化引导",
+          "anchor": "practice-web-ui",
+          "groupTitle": "Web UI & 收藏同步",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 三个前端入口\n\n| 入口 | 路由 | 目录 | 设计目标 |\n|------|------|------|----------|\n| **桌面端** | `/web` | `web/desktop/` | 大屏卡片式布局，Hero 惊喜推荐 + 推荐网格 + 画像看板 |\n| **移动端** | `/m` | `web/shared/` | 手机适配的单列布局，支持添加到主屏幕当 PWA 使用 |\n| **初始化引导** | `/setup` | `web/setup/` | 逐步引导用户完成平台连接和偏好设置 |\n\n### 桌面端推荐首页\n\n桌面端是用户体验的核心。它的设计遵循「信息密度优先」原则：\n\n- **Hero 区域**：最大的卡片展示「惊喜推荐」——delight_score 最高的内容，配有推荐理由\n- **推荐网格**：按评分排序的推荐内容，每个卡片包含标题、封面、推荐理由\n- **画像看板**：实时展示用户的兴趣标签、MBTI 推断、核心特质——让用户看到系统对自己的理解\n\n### 数据获取\n\n所有数据通过 REST API 和 WebSocket 从后端获取：\n\n- `GET /api/recommendations/feed` — 获取推荐列表\n- `GET /api/profile` — 获取用户画像\n- `WebSocket /api/ws/runtime` — 实时接收推荐更新和后台任务状态"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart LR\n    subgraph 前端入口\n        DESKTOP[桌面端 /web<br/>卡片式布局]\n        MOBILE[移动端 /m<br/>单列PWA]\n        SETUP[引导页 /setup<br/>逐步向导]\n    end\n\n    subgraph 数据通道\n        REST[REST API<br/>推荐/画像/配置]\n        WS[WebSocket<br/>实时事件推送]\n    end\n\n    subgraph 后端\n        API[api/app.py<br/>FastAPI]\n        REC[RecommendationEngine]\n        SOUL[SoulEngine]\n        EVENTS[RuntimeEventHub]\n    end\n\n    DESKTOP --> REST --> API\n    MOBILE --> REST --> API\n    SETUP --> REST --> API\n    DESKTOP --> WS --> EVENTS\n    MOBILE --> WS --> EVENTS\n    API --> REC\n    API --> SOUL",
+                "caption": "Web UI 架构：三入口 + 双通道"
+              }
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "javascript",
+                "content": "// web/js/stream.js — WebSocket 实时事件流客户端（74行）\n// 纯 JS 实现，无框架依赖，支持自动重连\n\nfunction buildWsUrl() {\n  const proto = location.protocol === \"https:\" ? \"wss:\" : \"ws:\";\n  return `${proto}//${location.host}/api/runtime-stream`;\n}\n\nexport function createStreamClient({\n  reconnectDelayMs = 2000,\n  maxReconnectDelayMs = 30_000,\n  onEvent = () => {},\n  onConnect = () => {},\n  onDisconnect = () => {},\n} = {}) {\n  let socket = null;\n  let currentDelay = reconnectDelayMs;\n\n  function scheduleReconnect() {\n    // 指数退避重连：2s → 4s → 8s → ... → 最大 30s\n    currentDelay = Math.min(Math.floor(currentDelay * 2), maxReconnectDelayMs);\n    reconnectTimer = setTimeout(() => connect(), currentDelay);\n  }\n\n  function connect() {\n    socket = new WebSocket(buildWsUrl());\n    socket.onopen = () => {\n      currentDelay = reconnectDelayMs;  // 连接成功，重置退避\n      onConnect();\n    };\n    socket.onmessage = (event) => {\n      try { onEvent(JSON.parse(event.data)); } catch { /* 忽略畸形消息 */ }\n    };\n    socket.onclose = () => {\n      socket = null;\n      onDisconnect();\n      scheduleReconnect();  // 断线后自动重连\n    };\n  }\n\n  return { connect, disconnect: () => { stopped = true; socket?.close(); } };\n}",
+                "caption": "web/js/stream.js — WebSocket 事件流客户端：自动重连 + 指数退避",
+                "lineHighlights": [
+                  3,
+                  8,
+                  20,
+                  26
+                ]
+              }
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "javascript",
+                "content": "// web/js/api.js — 后端 API 客户端（598行）\n// 从页面 origin 派生 BASE_URL，所有请求保持同源\n// HttpOnly session cookie 和 WebSocket 握手自动携带\n\nconst BASE_URL = `${location.protocol}//${location.host}/api`;\nconst DEFAULT_READ_TIMEOUT_MS = 12_000;\nconst CSRF_HEADER = \"X-OBC-Auth\";\n\n// 请求去重：使用 request_id 防止重试导致的重复操作\n// 持久化到 localStorage，页面刷新后仍能追踪进行中的请求\nconst pendingRequestIds = new Map();\n\nfunction newRequestId() {\n  if (typeof globalThis.crypto?.randomUUID === \"function\")\n    return globalThis.crypto.randomUUID();\n  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;\n}\n\n// 收藏操作使用更长的超时（10s），因为涉及跨平台 API 调用\nconst SAVED_MUTATION_TIMEOUT_MS = 10_000;\n// 反馈提交需要 LLM 处理，给 30s 超时\nconst FEEDBACK_SUBMIT_TIMEOUT_MS = 30_000;",
+                "caption": "web/js/api.js — API 客户端：同源请求 + 请求去重 + 分级超时",
+                "lineHighlights": [
+                  3,
+                  7,
+                  11,
+                  19
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "收藏同步的完整数据流",
+          "anchor": "practice-saved-flow",
+          "groupTitle": "Web UI & 收藏同步",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "callchain",
+              "callchain": {
+                "endpoint": "浏览器插件保存内容 → 跨平台同步",
+                "steps": [
+                  {
+                    "layer": "Extension",
+                    "filePath": "extension/src/",
+                    "functionName": "nativeSave()",
+                    "explanation": "浏览器插件检测到用户点击「收藏」按钮，将内容 URL 和平台信息发送给后端 `/api/saved/native` 端点。",
+                    "keyPoint": "浏览器插件是收藏的入口——用户在浏览任何平台时都可以一键收藏到 OpenBiliClaw"
+                  },
+                  {
+                    "layer": "API",
+                    "filePath": "api/app.py",
+                    "functionName": "POST /api/saved/native",
+                    "explanation": "API 端点接收收藏请求，验证参数后委托给 ExtensionNativeSaveBroker 处理。Broker 负责协调跨平台收藏的复杂逻辑。",
+                    "keyPoint": "API 层只做参数验证和路由——业务逻辑在 Broker 和 Service 中"
+                  },
+                  {
+                    "layer": "Identity",
+                    "filePath": "saved_sync/identity.py",
+                    "functionName": "content_storage_key()",
+                    "explanation": "生成内容的唯一存储键。从 URL 推断平台，提取内容 ID，生成跨平台唯一的标识符。如果同一内容已被收藏，会检测到重复。",
+                    "keyPoint": "内容身份标识是去重的基础——没有它，同一内容会在不同平台重复出现"
+                  },
+                  {
+                    "layer": "Persist",
+                    "filePath": "storage/database.py",
+                    "functionName": "insert_saved_item()",
+                    "explanation": "将收藏内容写入 saved_items 表。记录来源平台、内容 URL、收藏状态、收藏时间等信息。",
+                    "keyPoint": "收藏数据持久化到 SQLite——与推荐数据在同一个数据库中，便于后续关联分析"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**纯 HTML/CSS/JS 是本地应用的合理选择**——零构建、零依赖、开箱即用。不是所有项目都需要 React。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**跨平台去重的核心是内容身份标识**——URL 归一化 + 平台推断 + 内容ID提取，三者缺一不可。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**「稍后再看」和「收藏夹」是不同的收藏类型**——SavedListKind 枚举区分了不同的收藏场景，每种有不同的同步策略。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**「收藏」行为本身也是画像信号**——收藏的内容会被 Soul Engine 消费，作为强偏好信号影响后续推荐。",
+                    "highlight": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "收藏同步：跨平台内容身份标识",
+          "anchor": "practice-saved-sync",
+          "groupTitle": "Web UI & 收藏同步",
+          "difficulty": "advanced",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`saved_sync/` 模块实现了跨平台收藏同步。核心挑战是：**同一个内容在不同平台有不同的 URL 和 ID，如何识别它们是同一个东西？**\n\n### 模块结构\n\n| 文件 | 职责 |\n|------|------|\n| `saved_sync/service.py` | 收藏同步服务，协调各平台 Adapter 执行收藏操作 |\n| `saved_sync/router.py` | API 路由，提供 `/api/saved/*` 端点 |\n| `saved_sync/models.py` | 统一数据模型：SavedItemInput、SavedListKind 等 |\n| `saved_sync/identity.py` | **内容身份标识**——跨平台去重的核心 |\n| `saved_sync/adapters/` | 各平台的收藏操作适配器 |\n| `saved_sync/extension_broker.py` | 浏览器插件的收藏代理 |\n\n### 内容身份标识（Content Identity）\n\n`identity.py` 中的两个核心函数解决了跨平台去重问题：\n\n```python\ndef canonical_source_platform(url: str) -> str:\n    \"\"\"从 URL 推断内容来自哪个平台。\"\"\"\n    # bilibili.com → \"bilibili\"\n    # youtube.com → \"youtube\"\n    # xiaohongshu.com → \"xiaohongshu\"\n\ndef content_storage_key(platform: str, content_id: str) -> str:\n    \"\"\"生成跨平台唯一的内容存储键。\"\"\"\n    # 归一化平台标识 + 内容ID → 唯一键\n    # 例如：\"bilibili:BV1xx4x1y7z\"\n```\n\n当用户从浏览器插件保存一个 B 站视频，然后又在 YouTube 上看到同一个视频并保存时，系统通过 URL 推断平台、生成存储键，识别出这是重复内容。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# saved_sync/identity.py — 跨平台内容身份标识\n\ndef canonical_source_platform(raw: str) -> str:\n    \"\"\"将各种平台标识归一化为统一常量。\n    \n    浏览器插件上报的 URL 可能来自不同域名变体\n    （如 bilibili.com、b23.tv、www.bilibili.com），\n    这里统一归一化为 'bilibili'。\n    \"\"\"\n    ...\n\ndef content_storage_key(source_platform: str, raw_url: str) -> str:\n    \"\"\"生成内容的唯一存储键——跨平台去重的基础。\n    \n    同一内容在不同平台的 URL 不同，但通过\n    canonical_source_platform() + 内容ID提取\n    可以生成统一的存储键。\n    \"\"\"\n    platform = canonical_source_platform(source_platform)\n    item_key = make_item_key(platform, raw_url)\n    return f\"{platform}:{item_key}\"\n\n# 收藏数据模型\nclass SavedListKind(str, Enum):\n    WATCH_LATER = \"watch_later\"    # 稍后再看\n    FAVORITES = \"favorites\"        # 收藏夹\n    LIKED = \"liked\"                # 喜欢的内容",
+                "caption": "saved_sync/identity.py — 内容身份标识与去重",
+                "lineHighlights": [
+                  1,
+                  12,
+                  19,
+                  24
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

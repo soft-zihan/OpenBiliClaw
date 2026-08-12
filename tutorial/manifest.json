@@ -1,0 +1,24 @@
+{
+  "core": [
+    "00-meta.json",
+    "01-preparation.json",
+    "02-architecture.json",
+    "03-soul.json",
+    "04-discovery.json",
+    "05-recommendation.json",
+    "08-llm.json",
+    "17-agent-design.json",
+    "18-rag.json",
+    "11-memory.json",
+    "14-eval.json",
+    "16-interview.json"
+  ],
+  "extension": [
+    "06-sources.json",
+    "07-runtime.json",
+    "09-api.json",
+    "10-storage.json",
+    "12-web-saved.json",
+    "13-bilibili-youtube.json"
+  ]
+}

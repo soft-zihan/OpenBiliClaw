@@ -1,0 +1,317 @@
+{
+  "chapters": [
+    {
+      "id": "interview",
+      "title": "面试准备",
+      "sections": [
+        {
+          "title": "架构设计类面试题",
+          "anchor": "interview-architecture",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 20,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "架构设计",
+                "question": "OpenBiliClaw 使用五层灵魂模型（事件→偏好→觉察→洞察→灵魂）来理解用户。为什么选择管道模式（Pipeline）而非单体模型？如果偏好层做出了错误判断，系统如何防止错误传播？",
+                "answer": "**答案**：\n\n管道模式的核心优势是**关注点分离**和**渐进式理解**。\n\n**优点**：\n1. 每层只处理自己职责范围内的信息，降低了单层复杂度\n2. 可以独立升级某一层（如替换 PreferenceAnalyzer 的 LLM 模型）而不影响其他层\n3. 支持渐进式理解——新用户可以先产出偏好层，随着数据积累逐步深化到灵魂层\n4. 双向修正——上层结果可以反向修正下层（如觉察层发现用户行为变化，可以降低偏好层某些标签的权重）\n\n**缺点**：\n1. 层间接口设计是关键——如果 ProfileSignal 的格式设计不当，会导致层间耦合\n2. 错误会逐层传播——如果偏好层做出了错误判断，后续层都会基于错误信息继续推理\n3. 延迟较高——每层都可能涉及 LLM 调用，全链路延迟是各层之和\n\n**防错误传播机制**：\n- **ConfusionManager** 对不确定的判断暂缓处理，标记为「困惑」状态，等待更多证据\n- **PostureGate** 在第一层过滤低质量信号（快速划过、偶然行为）\n- 各层输出带有**置信度**（如 InsightHypothesis.confidence），让后续层能够区分「确定」和「推测」\n- **InterestTag.state** 使用状态机（trial→active→decaying→archived），新兴趣先进入 trial 状态，有足够证据后才升级为 active"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "架构设计",
+                "question": "OpenBiliClaw 的 Speculator 如何实现「主动破茧」？它与传统推荐系统的 Explore-Exploit 平衡有什么本质区别？如果推测兴趣总是被用户拒绝，系统如何避免持续打扰？",
+                "answer": "**答案**：\n\n**本质区别**：\n\n传统推荐系统的 Explore-Exploit 是在**同一个内容空间**内平衡——探索「用户可能喜欢的其他视频」，但这些视频仍然来自协同过滤的相似度计算。\n\nOpenBiliClaw 的 Speculator 是在**不同的语义空间**之间建立桥接——它通过 LLM 理解兴趣的深层语义，建立跨领域的心理关联。\n\n**实例对比**：\n- 传统推荐：用户看了「机械键盘评测」→ 推荐「鼠标评测」（同品类探索）\n- Speculator：用户看了「机械键盘评测」→ 推断「对精密机械结构有审美偏好」→ 推荐「建筑美学纪录片」（跨领域桥接）\n\n**实现机制**：\n1. Speculator 接收用户当前的兴趣标签\n2. 通过 LLM 分析这些兴趣背后的深层心理动机\n3. 基于心理学桥接逻辑，生成可能的「桥接兴趣」\n4. 桥接兴趣以 **trial 状态**加入画像，低频率试探性推荐\n5. 用户反馈验证或否定推测\n\n**防打扰机制**：\n- 推测兴趣的推荐频率远低于 confirmed 兴趣（`exploration_buffer.py` 控制探索比例上限约 20%）\n- 如果用户连续拒绝探索内容，系统会降低探索频率\n- 被拒绝的推测兴趣会被记录到 `avoidance_probe_feedback_history`，避免重复推测\n- AvoidanceSpeculator 镜像模块会推测用户**不喜欢**什么，将负面反馈转化为回避策略"
+              }
+            }
+          ]
+        },
+        {
+          "title": "设计模式与技术决策类面试题",
+          "anchor": "interview-patterns",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 20,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "设计模式",
+                "question": "项目中使用策略模式处理多平台数据源适配。请对比策略模式和适配器模式，并说明项目中两种模式各自的使用场景。",
+                "answer": "**答案**：\n\n**策略模式 vs 适配器模式**：\n- 适配器模式：将一个接口转换成另一个接口，解决「接口不兼容」问题\n- 策略模式：定义一系列算法，让它们可以互相替换，解决「算法可替换」问题\n\n**OpenBiliClaw 中两种模式都在使用**：\n- **策略模式**：`sources/` 中各平台的 Adapter（同一接口 `SourceProtocol`，不同实现）。运行时可以动态切换策略（同时从多个平台获取数据）\n- **适配器模式**：`bilibili/api.py` 封装 bilibili-api-python 库（将第三方库的接口适配为项目内部接口）\n\n**区分的关键**：\n- 策略模式中的各实现是**对等的**——它们实现同一个接口，只是算法不同\n- 适配器模式中的两端是**不对等的**——一端是外部系统，一端是内部系统，适配器在中间做翻译"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "技术决策",
+                "question": "为什么选择 SQLite 而非 PostgreSQL？在什么场景下这个选择会出问题？项目做了哪些措施来缓解 SQLite 的局限？",
+                "answer": "**答案**：\n\n**选择 SQLite 的原因**：\n1. **零配置**：面向个人用户的桌面应用，要求用户安装 PostgreSQL 不现实\n2. **数据主权**：所有数据在一个文件中，备份只需复制文件\n3. **性能足够**：个人级推荐系统的数据量（几万到几十万条事件）完全在 SQLite 能力范围内\n4. **嵌入式**：没有网络开销，没有连接池管理的复杂性\n\n**会出问题的场景**：\n1. 多用户并发写入（SQLite 只支持单写入者）\n2. 数据量超过 1TB\n3. 需要主从复制\n\n**项目中的缓解措施**：\n- **WAL 模式**：读写不互斥，提升并发读写性能\n- **ThreadPoolExecutor**：将数据库操作放到独立线程，避免阻塞 asyncio 事件循环\n- **嵌入缓存隔离**：向量嵌入存储在独立的 `embedding_cache.db`，不影响主数据库性能\n- **JSON 列**：复杂数据结构使用 JSON 存储，避免频繁的 Schema 变更"
+              }
+            }
+          ]
+        },
+        {
+          "title": "LLM 智能体设计类面试题",
+          "anchor": "interview-llm",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 20,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "LLM 工程",
+                "question": "OpenBiliClaw 的 15 个 Prompt 使用了从 0.1 到 0.8 的不同温度参数。请解释温度选择的哲学，并说明为什么 PostureGate 使用 0.1 而推荐表达使用 0.8。",
+                "answer": "**答案**：\n\n**温度的本质**：控制 LLM 输出的随机性。低温（0.1）让模型选择概率最高的 token，输出确定性高；高温（0.8）让模型有更多随机性，输出创造性强。\n\n**选择哲学**：温度与任务的「容错空间」成正比。\n\n- **temperature=0.1**（PostureGate、ContentEvaluation）：这些任务需要**确定性判断**。判断一个事件是否值得处理、一个内容是否合格，必须严格一致。如果 PostureGate 用高温，同一个事件可能被随机判断为「值得处理」或「不值得处理」，导致画像更新不稳定。\n\n- **temperature=0.8**（推荐表达 Expression）：这个任务需要**创造性发散**。推荐理由不应该千篇一律，而应该根据用户画像和内容特征生成多样化的表达。高温让每次推荐的措辞都有变化，更像「朋友推荐」而非「机器模板」。\n\n**中间温度的对应**：\n- 0.3（偏好分析、Delta 检测）：结构化提取，允许少量变化但不能偏离事实\n- 0.5（觉察、洞察、对话分析）：合理推断，在事实基础上进行有限度的创造性解读\n- 0.7（推测、关键词生成）：创造性发散，但不能完全脱离用户兴趣"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "LLM 工程",
+                "question": "LLM 模块的故障降级链是如何实现的？如果 default_chain 中所有 Provider 都失败了会怎样？请特别说明 LLMAuthError 为什么不重试。",
+                "answer": "**答案**：\n\n`llm/service.py` 的 `complete_chain()` 方法实现了故障降级：按顺序尝试 `default_chain` 中的 Provider，遇到限流或超时自动跳到下一个。\n\n**错误分类体系**（`llm/base.py`）：\n```\nLLMProviderError (基类)\n├── LLMRateLimitError    — 限流（429/402），退避重试\n├── LLMAuthError         — 认证失败（401），不重试\n├── LLMTimeoutError      — 超时，可重试\n├── LLMResponseError     — 响应无效，可重试\n└── LLMFallbackError     — 所有 Provider 都失败\n```\n\n**LLMAuthError 不重试的原因**（代码注释原文）：\n> \"Retrying is futile until the user edits config, so provider retry loops treat this as terminal — retrying a 401 three times per shard only multiplies the failed requests visible in the provider's console.\"\n\n认证失败重试毫无意义——重试三次只会让 Provider 后台看到三条失败记录，用户会困惑「我的 Token 明明有使用记录，为什么是 401？」。所以系统直接终止，不浪费时间和资源。\n\n**全失败时的处理**：\n- 推荐系统进入「降级模式」——已缓存的推荐仍可展示\n- 前端显示错误提示\n- 后台任务等待一段时间后自动重试"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "LLM 工程",
+                "question": "OpenBiliClaw 如何控制 LLM 调用成本？请从 Prompt 缓存、批量处理、优先级调度三个维度分析。",
+                "answer": "**答案**：\n\n**1. Prompt 分层缓存**（`prompt_cache.py`）：\n将画像拆分为 5 个独立层（core/life/interests/style/recent），每层独立计算 SHA-256 摘要。当某层数据没有变化时，直接复用缓存的渲染文本，**零 Token 消耗**。\n- 核心层（MBTI、核心特质）最稳定，缓存命中率最高\n- 最近层（觉察、洞察）变化最频繁，缓存命中率最低\n\n**2. 批量处理**：\n- `build_batch_content_evaluation_prompt`：一次 LLM 调用处理多个内容的评分，而非每个内容单独调用\n- `DialogueSettlementQueue`：对话反馈积累后批量结算，避免每句话都触发画像更新\n- 画像去重（consolidator）：32 个聚类一次 LLM 调用\n\n**3. 优先级调度**：\n```python\n_PRIORITY_MAP = {\n    \"recommendation.write_expression\": 1,  # 最高：用户正在等待推荐\n    \"discovery.evaluate_batch\":         1,  # 最高：当前批次评分\n    \"soul\":                              2,  # 中：画像更新\n    _DEFAULT_PRIORITY:                    3,  # 低：其他后台任务\n}\n```\n当 LLM 槽位紧张时，用户可见的操作永远优先于后台操作。\n\n**4. Reasoning 控制**：\n对于结构化提取任务（关键词生成、内容评分），关闭 DeepSeek 等模型的 thinking 模式，节省大量推理 Token。"
+              }
+            }
+          ]
+        },
+        {
+          "title": "RAG 与系统设计类面试题",
+          "anchor": "interview-rag-system",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 20,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 设计",
+                "question": "OpenBiliClaw 的候选池清理（pool_purge）使用了「Recall → LLM Precision」两阶段模式。请解释为什么嵌入召回使用低阈值 0.55，而独立模式使用高阈值 0.78。",
+                "answer": "**答案**：\n\n**两阶段流水线**：\n1. 嵌入召回：用低阈值(0.55)广撒网，返回所有语义相似度 > 0.55 的候选\n2. LLM 精判：对召回集逐条判断 keep/purge\n\n**为什么用低阈值 0.55？**\n代码注释：\"Deliberately low to maximize recall. False positives are filtered out by the LLM precision pass.\"\n\nRAG 的经典模式——**召回阶段追求高召回率**（宁可多召回一些不相关的），**精判阶段追求高准确率**（由 LLM 来做最终判断）。\n\n如果嵌入阈值设得太高（如 0.78），可能会漏掉语义相关但用词不同的内容。比如用户不喜欢「营销文」，但候选池中可能有一条标题是「5分钟教你月入过万」——用词完全不同但语义高度相关。低阈值确保这些内容被召回。\n\n**为什么独立模式用 0.78？**\n当 LLM 不可用时（如初始化阶段），没有精判环节。此时必须用更高的阈值来弥补缺少精判的不足——只清理那些「非常确定」相关的内容。这是一个优雅的降级设计——系统在能力不足时变得更保守，而非更激进。"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "系统设计",
+                "question": "如果要将 OpenBiliClaw 从单用户桌面应用改造为多用户 SaaS 服务，需要修改哪些核心模块？最大的技术挑战是什么？",
+                "answer": "**答案**：\n\n**需要修改的核心模块**：\n\n1. **Storage 层**（最大改动）：\n   - SQLite → PostgreSQL/MySQL（多用户并发写入）\n   - 所有表增加 `user_id` 字段\n   - 连接池管理\n   - 数据隔离（Row-Level Security 或 Schema 隔离）\n\n2. **Memory 层**：\n   - JSON 文件 → 数据库存储（多用户不能每人一个文件）\n   - MemoryLayer 的懒加载需要增加用户维度\n\n3. **API 层**：\n   - 认证系统从「可选密码」升级为用户注册/登录/OAuth\n   - 每个请求需要鉴权（中间件层）\n   - 速率限制（按用户）\n\n4. **Runtime 层**：\n   - 后台任务需要按用户调度\n   - EventHub 需要用户维度的隔离\n   - 资源隔离（一个用户的 LLM 调用不应影响其他用户）\n\n5. **LLM 层**：\n   - API Key 管理从「用户自己的 Key」变为「平台统一 Key」\n   - 成本追踪需要按用户计费\n   - 并发控制需要按用户限流\n\n**最大技术挑战**：\n- **数据隔离**：确保用户 A 无法访问用户 B 的画像和推荐\n- **成本控制**：LLM 调用成本从「用户自付」变为「平台承担」，需要精细的按用户计费\n- **性能隔离**：一个重度用户的后台任务不应影响其他用户的响应速度"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "系统设计",
+                "question": "OpenBiliClaw 的内容匹配采用了五层漏斗管线（关键词召回-Embedding预过滤-LLM评估-准入阈值-多样性压缩）。为什么不直接用 RAG 做向量检索？每一层的技术选型逻辑是什么？",
+                "answer": "**答案**：\n\n**为什么不用纯 RAG 向量检索？**\n\nRAG 的核心是根据查询找到最相似文档，但内容推荐的需求远比语义相似度复杂：\n1. **深层匹配**：用户喜欢机械键盘评测，系统需理解背后的精密机械审美偏好，推荐钟表修复纪录片——两者 embedding 距离远但深层匹配度高\n2. **多样性需求**：纯向量检索返回高度同质化结果\n3. **探索需求**：用户需要跨域惊喜，向量检索天然偏向已知兴趣\n\n**每层选型逻辑**：\n- 关键词召回（LLM 生成）：利用 LLM 理解力扩展搜索意图，25% 四象限分布保证多样性\n- Embedding 预过滤（余弦<0.3）：计算成本极低，过滤约 50% 明显不相关候选，节省 LLM API 费用\n- LLM 批量评估（45条/批）：只有 LLM 能理解深层语义匹配，system prompt 缓存利用 provider prompt cache 省 50-90% token\n- 准入阈值（0.60/0.58）：简单可靠，explore 阈值略低以鼓励跨域\n- 多样性压缩：embedding 聚类解决 topic 粒度不一致，per-source 保底防止高分策略垄断\n\n**关键洞察**：这是成本递增、精度递增的漏斗。Embedding 预过滤用最低成本处理大量候选，LLM 只处理值得深度分析的少量候选。全量 LLM 评估 300 条候选 API 成本翻倍；只用 Embedding 不接 LLM 则推荐质量大幅下降。"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "系统设计",
+                "question": "OpenBiliClaw 的后台刷新使用了 6 个独立循环（refresh/pool_precompute/candidate_eval/soul_pipeline/proactive_push/pool_maintenance），而不是一个统一的主循环。为什么？如果合并成一个循环会有什么问题？",
+                "answer": "**答案**：\n\n**为什么拆成 6 个独立循环？**\n\n核心原因：**一个慢循环不能阻塞其他循环**。\n\n1. **故障隔离**：B站搜索被限速时，`_loop_refresh` 可能卡住几分钟（等待 v_voucher 冷却）。如果 precompute 和 candidate_eval 也挂在同一个循环里，池中新内容就无法及时生成推荐表达，用户看到的推荐会缺少个性化文案。\n\n2. **优先级分离**：画像更新（soul_pipeline）必须及时——用户刚收藏了一个视频，画像需要立即更新，下一轮发现才能搜索相关内容。如果画像更新排在搜索后面，用户行为的影响会延迟一整轮。\n\n3. **频率差异**：proactive_push 每 120 秒一次，pool_maintenance 可能每 10 分钟一次。如果统一循环，要么频率太高浪费资源，要么频率太低响应不及时。\n\n**合并成一个循环的问题**：\n- 搜索限速 → 整个循环卡住 → 推荐表达无法生成 → 用户看到「裸」推荐\n- 搜索限速 → 画像更新延迟 → 下一轮搜索方向错误 → 推荐质量下降\n- 搜索限速 → 新候选无法评估 → 池子空了但无法补充 → 推荐列表变短\n\n**独立循环的代价**：\n- 需要锁机制防止并发冲突（如 `_refresh_lock` 防止多个刷新同时执行）\n- 需要协调机制（如 `_precompute_lock` 防止重复生成推荐表达）\n- 代码复杂度更高\n\n但这些代价远小于「一个慢循环拖垮整个系统」的风险。"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "系统设计",
+                "question": "OpenBiliClaw 的 related_chain 策略完全不依赖搜索词，而是利用 B站的「相关推荐」API 进行链式探索。这种设计和搜索策略相比有什么优劣？如何防止「回声室效应」？",
+                "answer": "**答案**：\n\n**related_chain vs search 的优劣**：\n\n| 维度 | related_chain | search |\n|------|---------------|--------|\n| 发现方式 | 从已知好内容出发，沿相关推荐链探索 | LLM 生成搜索词，主动搜索 |\n| 优势 | 发现「语义上相关但搜索词难以覆盖」的内容 | 精准匹配用户兴趣关键词 |\n| 劣势 | 依赖 B站推荐算法的质量 | 搜索词质量决定发现质量 |\n| 适用场景 | 深度探索某个兴趣领域 | 广度覆盖多个兴趣方向 |\n\n**回声室效应**：如果种子全是「机械键盘」，相关推荐也全是键盘，推荐列表会失去多样性。\n\n**防回声室机制**：\n1. **跨域种子**：5 个种子中有 1~2 个来自 explore/trending 策略，引入不同方向\n2. **标题去重**：种子选择时按标题前 4 字符去重，避免同一话题的种子占满名额\n3. **UP 主上限**：每轮发现中，同一个 UP 主的内容最多保留 N 条（`_RELATED_CHAIN_PER_UP_CAP`），防止「张雪机车×13」的情况\n4. **两层深度限制**：最多探索 2 层，防止链式探索偏离太远\n\n**关键洞察**：related_chain 和 search 是互补的。search 擅长广度覆盖（通过 LLM 生成多样化搜索词），related_chain 擅长深度探索（通过相关推荐发现搜索词难以覆盖的内容）。两者结合才能实现「既广又深」的发现。"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "系统设计",
+                "question": "OpenBiliClaw 的嵌入缓存使用了 provenance 追踪。为什么需要这个设计？如果切换了嵌入模型但没有 provenance 会发生什么？",
+                "answer": "**答案**：\n\n**Provenance 追踪的作用**：\n\n每次嵌入计算都会记录来源证明（provenance），包含 provider、endpoint、model、dimension 四个维度：\n\n```python\nprovenance = {\n    \"provider\": \"dashscope\",\n    \"endpoint\": \"https://dashscope.aliyuncs.com/...\",\n    \"model\": \"text-embedding-v3\",\n    \"dimension\": 1024\n}\n```\n\n**如果切换了嵌入模型但没有 provenance**：\n\n1. **维度不匹配**：旧模型可能输出 768 维向量，新模型输出 1024 维。如果混用，余弦相似度计算会在不同维度的向量之间进行，结果毫无意义。\n\n2. **语义空间不同**：即使维度相同，不同模型的嵌入空间也不同。模型 A 认为相似的文本对，模型 B 可能认为不相似。混用会导致聚类、召回等所有依赖嵌入相似度的功能失效。\n\n3. **静默错误**：最危险的是，维度恰好相同时不会报错，但结果是错误的——这比显式报错更可怕。\n\n**Provenance 的解决方案**：\n缓存键包含 provenance 哈希。切换模型后，新请求的 provenance 与旧缓存不匹配，自动跳过旧缓存、重新计算。旧缓存会在清理时自然淘汰。"
+              }
+            }
+          ]
+        },
+        {
+          "title": "面试题：LLM 并发控制与流量优先级",
+          "anchor": "practice-interview-llm-concurrency",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "LLM 工程",
+                "question": "如果推荐池为空，但后台任务（如画像更新）正在占用所有 LLM 并发槽位，会导致什么问题？OpenBiliClaw 如何解决？（提示：考虑搜索词生成、内容评估、表达生成之间的依赖关系；如果搜索词生成被分类为 MAINTENANCE，会被 REFILL_EXPRESSION 阻塞；表达等待评估，评估等待搜索词，搜索词等待表达——死锁；RefillAdmissionSemaphore 的库存感知机制；池空时搜索词生成从 MAINTENANCE 升级为 REFILL_SUPPLY）",
+                "answer": "OpenBiliClaw 的 LLM 并发控制使用双层信号量：PrioritySemaphore（全局）+ RefillAdmissionSemaphore（后台）。当推荐池为空时，搜索词生成从 MAINTENANCE 升级为 REFILL_SUPPLY，打破死锁。还有 5 分钟饥饿保护，防止画像更新被无限期阻塞。"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "推荐表达",
+                "question": "为什么推荐表达需要 ToneProfile？如果所有用户都使用相同的语气风格，会有什么问题？（提示：用户画像的 depth_preference 差异很大；连续 dislike 后用户需要更关怀的语气；信息密度应该匹配用户的认知风格；ToneProfile 的 4 个维度：density/warmth/playfulness/directness）",
+                "answer": "ToneProfile 根据用户画像动态调整推荐语风格：深度偏好高的用户使用 dense 密度，连续 dislike 后切换为 companion + soft（更关怀、更委婉）。如果所有用户使用相同语气，深度用户会觉得太浅，浅层用户会觉得太密，dislike 用户会觉得系统不理解他们。"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "搜索关键词",
+                "question": "OpenBiliClaw 的搜索关键词是如何生成的？为什么不直接用用户最强的兴趣作为搜索词？画像裁剪在这个流程中起什么作用？（提示：25% 四象限分配；画像裁剪丢弃了 awareness/insights 等高变动字段；MMR 多样性选择避免搜索词集中在最强兴趣；池分布感知实现供需平衡；防风暴机制保护 IP 不被限流）",
+                "answer": "搜索关键词生成是 **画像裁剪 → LLM 生成 → 池感知 → 缓存 → 执行** 的多层流程。\n\n**为什么不直接用最强兴趣？** 如果 80% 搜索词围绕最强兴趣，召回内容高度同质化，用户已经看过大量这类内容。系统采用 25% 四象限分配（一级域/二级细分/猜测兴趣/跨域探索），确保多样性。\n\n**画像裁剪**：`build_query_generation_profile_summary()` 丢弃 awareness（近期行为）、insights（深层假设）等高变动字段，只保留 interest_domains、interests、style 等稳定字段。原因有三：1) 缓存稳定性——高变动字段会让缓存 key 频繁失效；2) token 成本控制——裁剪后几百 token vs 完整画像上千 token；3) 关注点分离——搜索词只需要「用户喜欢什么方向」。\n\n**MMR 多样性选择**：当兴趣超过 64 条时，使用 Maximal Marginal Relevance 算法选择子集，平衡权重（0.27）与新颖度（0.46），并对不喜欢主题做惩罚（-0.48）。\n\n**池感知**：接收 pool_distribution_hints，如果池子里某方向已拥挤，搜索词自动避开；冷启动时强制分散方向。\n\n**防风暴**：搜索执行时随机抖动 0.5-1.0s，连续 3 次空结果判定为 IP 限流并中止，使用专用 search_client 隔离流量。"
+              }
+            },
+            {
+              "type": "list",
+              "list": {
+                "style": "icon",
+                "items": [
+                  {
+                    "content": "并发控制不只是信号量——优先级感知、库存感知、取消安全性都是生产系统的必备设计",
+                    "highlight": true
+                  },
+                  {
+                    "content": "语气控制是推荐系统的「人格」——它决定了用户对系统的感知是「冷冰冰的算法」还是「懂我的朋友」",
+                    "highlight": false
+                  },
+                  {
+                    "content": "搜索词生成体现了「供给端智能」——不是简单搜索用户最喜欢的，而是在用户兴趣、池分布、IP 保护之间取得平衡",
+                    "highlight": false
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "Agent 核心考点面试题：生命周期、Memory、自进化与评测",
+          "anchor": "interview-agent-core",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 25,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "Agent 生命周期",
+                "question": "OpenBiliClaw 的 Agent Orchestrator 如何管理 Agent 的生命周期？启动顺序为什么重要？如果 MemoryManager 初始化失败，系统应该如何处理？",
+                "answer": "**答案**：\n\n**生命周期三阶段**：\n\n```\ninitialize() → 各引擎按依赖顺序启动\n    ↓\nrun() → 后台任务循环执行（6 个独立循环）\n    ↓\nshutdown() → 优雅关闭：保存状态、关闭连接、清理资源\n```\n\n**启动顺序即依赖拓扑**：\n\n```\nMemoryManager → SoulEngine → DiscoveryEngine → RecommendationEngine\n```\n\n- MemoryManager 必须先启动：SoulEngine 需要 MemoryManager 提供事件数据来构建画像\n- SoulEngine 必须先于 DiscoveryEngine：发现引擎需要画像来生成搜索策略\n- DiscoveryEngine 先于 RecommendationEngine：推荐引擎需要发现引擎填充候选池\n\n**如果 MemoryManager 初始化失败**：\n- 所有下游引擎都无法启动（依赖链断裂）\n- Agent Orchestrator 应捕获异常，记录日志，进入**降级模式**——API 层仍可响应，但推荐功能不可用\n- 不应静默失败——用户需要知道「记忆系统不可用，推荐功能暂停」\n\n**面试表述建议**：\n> 「我设计的 Agent Runtime 采用分层启动策略，启动顺序就是依赖拓扑排序。每个引擎只在依赖就绪后才初始化，这保证了运行时的状态一致性。优雅关闭时按逆序释放资源，确保状态持久化在连接关闭之前完成。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "Agent Loop",
+                "question": "OpenBiliClaw 的 CognitionCycle 如何实现有界 Agent Loop？它与经典的 Plan-Tool-Observe-Final 循环有什么区别和联系？如果 LLM 持续返回格式错误的 JSON，系统如何避免无限重试？",
+                "answer": "**答案**：\n\n**经典 Agent Loop**：Plan → Tool → Observe → Final（或 Action → Observation → 判断是否终止）\n\n**OpenBiliClaw 的变体**：CognitionCycle 不是单步 Agent Loop，而是一个**周期性有界批处理循环**：\n\n```\n每 12 小时（或 30 事件触发）：\n  1. 游标式增量读取（watermark 机制）\n  2. 分批处理（每批 300 事件，上限 900）\n  3. 每批调用 LLM → Awareness 分析\n  4. 每批处理后立即持久化 watermark\n  5. 进入 Insight 阶段（基于 Awareness 结果）\n  6. 单次重试（2 秒退避）\n  7. 循环结束\n```\n\n**「有界」体现在**：\n- 事件上限 900（`_AWARENESS_BACKLOG_CAP`），不会无限处理\n- 批大小 300，单次 LLM 调用不会超时\n- 单次重试，不会无限重试\n- 12 小时节流，不会频繁调用\n\n**与 Plan-Tool-Observe 的联系**：\n- Plan = 游标确定要处理的事件范围\n- Tool = LLM 调用（AwarenessAnalyzer / InsightAnalyzer）\n- Observation = LLM 返回的 AwarenessNote / InsightHypothesis\n- Final = watermark 持久化，循环终止\n\n**JSON 格式错误的处理**：\n- `parse_llm_json()` 四层容错：标准解析 → 正则提取 → 修复尾逗号 → 返回 None\n- 如果仍然失败，单次重试（2 秒退避）\n- 重试仍失败 → 记录日志，跳过本批次，watermark 不前进\n- 下次循环从同一位置继续，不会丢失数据\n\n**面试表述建议**：\n> 「我实现的 Agent Loop 采用有界循环设计——通过 watermark 游标、事件上限和单次重试三个机制确保循环必然终止。每批处理后立即持久化进度，即使进程崩溃也能从断点恢复。这种设计借鉴了 Checkpoint 思想，是生产环境 Agent 的必备模式。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "Memory 管理",
+                "question": "OpenBiliClaw 的记忆系统如何对应 Agent 中的 Working/Episodic/Semantic 三层记忆？MemoryLayer 的懒加载和脏检查机制解决了什么问题？如果要将记忆系统从 JSON 文件迁移到数据库，需要解决哪些挑战？",
+                "answer": "**答案**：\n\n**三层记忆映射**：\n\n| Agent 记忆类型 | OpenBiliClaw 实现 | 特征 |\n|---------------|-------------------|------|\n| **Working Memory**（工作记忆） | 当前 SoulProfile 对象（内存中） | 当前活跃的画像状态，进程内直接访问 |\n| **Episodic Memory**（情景记忆） | `events` 表（SQLite） | 原始行为事件的时间序列，按时间检索 |\n| **Semantic Memory**（语义记忆） | `memory/` 下的 JSON 文件层 | 结构化的知识——兴趣标签、偏好、推测历史 |\n\n**Working Memory 的体现**：\n- `SoulProfile` 对象在内存中维护当前画像状态\n- `ProfileLedger` 记录每次变更（审计轨迹）\n- `ProfileOverrides` 存储用户手动修正（独立于 AI 生成）\n\n**Episodic Memory 的体现**：\n- 17 种事件类型，每种有信号强度权重\n- 按时间排序，支持 watermark 游标式增量读取\n- 去重机制（ingest_key）防止重复入库\n\n**Semantic Memory 的体现**：\n- MemoryLayer 懒加载：按需从磁盘读取 JSON 文件\n- 脏检查（mtime 追踪）：检测外部修改后自动重载\n- 发现运行时记忆：`probe_feedback_history` 记录推测兴趣的验证/否定历史\n\n**懒加载解决的问题**：\n- 启动时不需要所有记忆层，按需加载减少启动时间和 I/O\n- 某些层（如推测历史）访问频率低，常驻内存浪费资源\n\n**脏检查解决的问题**：\n- 用户可能手动编辑 JSON 文件修正画像\n- 系统应检测并自动重载，而非覆盖用户修改\n\n**迁移到数据库的挑战**：\n1. **并发访问**：JSON 文件不支持并发写入，需要事务管理\n2. **查询能力**：JSON 文件只能全量加载，数据库支持条件查询\n3. **版本控制**：需要实现 MemoryLayer 的 mtime 等价机制\n4. **向后兼容**：现有的 `profile_overrides.json`、`cognition_cycle_state.json` 等需要迁移\n5. **UTF-8 处理**：数据库连接需要显式指定字符集\n\n**面试表述建议**：\n> 「我的记忆系统设计参考了认知科学的三层记忆模型。Working Memory 对应当前活跃的画像对象，Episodic Memory 对应行为事件的时间序列存储，Semantic Memory 对应结构化的知识层。这种分层让系统可以针对不同记忆类型采用不同的存储策略和更新频率。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "自进化与反馈闭环",
+                "question": "OpenBiliClaw 如何实现 Agent 的自进化？从用户反馈到系统改进，完整的反馈闭环是什么？Speculator 的兴趣生命周期管理与自进化有什么关系？",
+                "answer": "**答案**：\n\n**三层反馈闭环**：\n\n**第一层：实时反馈（秒级）**\n```\n用户行为（like/favorite/dislike）\n  → MemoryManager.ingest_event()\n  → PostureGate 质量门控\n  → ProfileUpdatePipeline 实时更新偏好层\n  → 下一轮推荐立即反映变化\n```\n\n**第二层：认知循环反馈（12 小时级）**\n```\n积累的行为事件\n  → CognitionCycle（Awareness → Insight）\n  → 行为模式变化检测\n  → 深层假设生成（带置信度）\n  → 假设确认/拒绝 → 画像重建\n```\n\n**第三层：系统级自优化（天级）**\n```\n评估框架（Persona + LLM-as-Judge）\n  → 多维度评分（相关性/新颖度/多样性/惊喜感）\n  → 自动优化器调整推荐参数\n  → 下一轮评估验证改进效果\n```\n\n**Speculator 兴趣生命周期与自进化**：\n\n```\nGenerate → Active → Promote（confirmed ≥ 3次）/ Reject + Cooldown\n                ↓\n           Deferred（7→14→30天阶梯延迟）→ Revived\n```\n\n- **推测生成**：LLM 基于心理学桥接逻辑猜测新兴趣\n- **行为验证**：用户行为确认或否定推测\n- **阶梯延迟**：多次忽略 → 逐渐减少打扰 → 30 天冷却\n- **僵局检测**：部分确认但未达阈值 → 生成 Confusion → 驱动澄清行为\n\n**这就是自进化**：系统不是被动等待用户指令，而是主动猜测、验证、调整。被拒绝的推测记录到 `avoidance_probe_feedback_history`，AvoidanceSpeculator 镜像模块将负面反馈转化为回避策略。\n\n**面试表述建议**：\n> 「我设计的 Agent 实现了三层反馈闭环：实时行为反馈驱动偏好层更新，12 小时认知循环驱动深层理解，评估框架驱动系统参数自优化。Speculator 模块实现了主动破茧——系统不再被动推荐，而是主动猜测、验证、调整。被拒绝的推测会转化为回避策略，形成完整的自进化闭环。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "评测体系",
+                "question": "OpenBiliClaw 的评测框架如何体现 Agent Evaluation Harness 的设计思想？虚拟用户画像（Persona）+ 事件模拟器的组合解决了什么问题？为什么需要「专项评估」而非只做「综合评估」？",
+                "answer": "**答案**：\n\n**Agent Evaluation Harness 的核心思想**：\n\n构建一个**受控的、可复现的、多维度的**评测环境，让 Agent 的表现可以量化比较。\n\n**OpenBiliClaw 的实现**：\n\n```\nPersonaGenerator（虚拟用户）\n  → EventSimulator（模拟行为）\n  → 推荐系统（与真实用户共享同一套代码）\n  → PersonaJudge（LLM-as-Judge 评估）\n  → Optimizer（自动调参）\n```\n\n**虚拟用户 + 事件模拟器解决的问题**：\n1. **冷启动评测**：新用户没有行为数据时，系统表现如何？\n2. **边界条件测试**：极端用户类型（只关注一个领域 vs 兴趣极其广泛）\n3. **可复现性**：相同虚拟用户 + 相同事件 = 可复现的评测结果\n4. **回归测试**：参数调整后，用相同虚拟用户重新评测，对比改进效果\n\n**为什么需要专项评估**：\n\n| 专项评估 | 评估目标 | 诊断价值 |\n|---------|---------|----------|\n| `discovery_evaluator` | 发现引擎的搜索质量、多样性 | 定位「搜索词质量差」vs「候选池质量差」 |\n| `speculation_evaluator` | 推测引擎的破茧成功率 | 定位「推测方向错误」vs「验证机制不灵敏」 |\n| `persona_judge` | 推荐结果的综合质量 | 定位「相关性高但多样性差」vs「多样性好但惊喜感不足」 |\n\n综合评估只能告诉你「系统整体好不好」，专项评估能告诉你「哪个模块需要改进、怎么改进」。\n\n**确定性评估线路**：\n- `ROW-WIRE-V1` 协议确保 LLM 输入/输出格式一致\n- 相同输入产生相同 JSON，确保评测结果可复现\n- 严格验证拒绝任何格式偏差\n\n**面试表述建议**：\n> 「我构建了端到端的 Agent Evaluation Harness——通过虚拟用户画像和事件模拟器创建受控评测环境，用 LLM-as-Judge 进行多维度评估。评估框架分为综合评估和专项评估：综合评估衡量整体质量，专项评估（发现引擎、推测引擎）精确定位问题模块。确定性传输协议 ROW-WIRE-V1 确保评测结果可复现，支持回归测试和参数自动优化。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "上下文压缩",
+                "question": "OpenBiliClaw 如何在 Token 预算内管理 Agent 的上下文？compact-v1 投影、Prompt 分层缓存和加权洞察上下文选择三者如何协同工作？",
+                "answer": "**答案**：\n\n**三层上下文压缩协同工作**：\n\n```\n原始事件（含 15 个内部字段）\n  ↓ compact-v1 投影（事件级压缩）\n裁剪后事件（只保留语义字段）\n  ↓ Prompt 分层缓存（画像级压缩）\n缓存命中的画像层（零 Token 消耗）\n  ↓ 加权洞察上下文选择（假设级压缩）\nTop-40 最相关假设（从 441 条中选出）\n```\n\n**第一层：compact-v1 事件投影**\n- 移除 15 个内部字段（browser_context、dom_snapshot 等）\n- URL 去冗余（有 bvid 时移除 url）\n- 元数据净化（截断畸形 metadata 到 512 字符）\n- 效果：大幅减少每次 LLM 调用的输入 Token\n\n**第二层：Prompt 分层缓存**\n- 画像拆分为 5 个独立层（core/life/interests/style/recent）\n- 每层独立 SHA-256 摘要\n- 未变化的层直接复用缓存文本，零 Token 消耗\n- 核心层（MBTI、价值观）最稳定，缓存命中率最高\n- 效果：稳态下 90% 的画像 Token 被缓存\n\n**第三层：加权洞察上下文选择**\n- 441 条持久化假设 → 五维度加权评分 → Top-40\n- 四阶段填充：Judged Reserve(8) + Recent(8) + Relevance(16) + Importance(8)\n- 近重复去重（相似度 ≥ 0.82 只保留一条）\n- 效果：从 79,558 字符压缩到约 8,000 字符\n\n**三者协同**：\n- compact-v1 压缩了「输入事件」的体积\n- 分层缓存压缩了「用户画像」的重复渲染\n- 加权选择压缩了「历史假设」的上下文窗口\n- 三者叠加，让每次 LLM 调用的 Token 消耗降低 80%+\n\n**面试表述建议**：\n> 「我实现了三层上下文压缩：事件级投影移除对 LLM 无用的内部字段，画像级分层缓存让稳态下 90% 的 Token 被复用，假设级加权选择从 441 条历史假设中智能选出 Top-40。三层叠加让 LLM 调用的 Token 消耗降低 80% 以上，同时保持了认知循环的信息完整性。」"
+              }
+            }
+          ]
+        },
+        {
+          "title": "面试准备总结",
+          "anchor": "interview-summary",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 5,
+          "blocks": [
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**架构题要抓核心矛盾**——管道模式的优势是关注点分离，代价是错误传播。面试官想听到的是你理解 trade-off，而非只说优点。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**技术决策题要说清楚约束条件**——选 SQLite 不是因为「SQLite 好」，而是因为「在本地优先、单用户、零配置的约束下，SQLite 是最优解」。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**LLM 工程题要展示实践经验**——温度选择、JSON 容错解析、AuthError 不重试——这些细节展示了真实的 LLM 应用开发经验。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**系统设计题要展示成本意识**——五层漏斗管线的核心是成本递增、精度递增。Embedding 预过滤省钱，LLM 深度评估保质。每一层都是在成本和精度之间找最优平衡。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**RAG 题要理解两阶段模式**——Recall 追求高召回率（低阈值），Precision 追求高准确率（LLM 判断）。这是 RAG 系统的黄金模式。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**系统设计题要展示全局思维**——从单用户到多用户的改造不只是换数据库，而是涉及数据隔离、成本控制、性能隔离等系统性挑战。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**Agent 生命周期题要讲清依赖拓扑**——启动顺序就是依赖图的正向遍历，关闭顺序就是逆向遍历。面试官想听到你用「拓扑排序」来解释为什么 MemoryManager 必须先于 SoulEngine。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**Memory 管理题要映射到认知科学**——Working/Episodic/Semantic 三层记忆不是拍脑袋分的，而是对应了认知科学的标准模型。这种映射展示了你的知识深度。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**自进化题要强调闭环**——不是「系统能学习」就够了，要说清楚反馈信号的来源（用户行为）、传递路径（三层闭环）、和修正机制（推测→验证→调整）。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**评测体系题要关联 Evaluation Harness**——这是 Agent 方向的高频简历关键词。重点讲「受控环境 + 可复现 + 多维度 + 自动优化」四个特征。",
+                    "highlight": true
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,326 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：从行为数据到人格画像",
+          "anchor": "practice-soul-background",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "beginner",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Soul Engine 是 OpenBiliClaw 最核心的模块，负责将用户的原始行为数据转化为深层次的人格画像。它不只是在做「标签匹配」，而是在尝试理解「你是一个什么样的人」。\n\n### 五层灵魂模型（Onion Layers）\n\n这套模型借鉴了心理学中的洋葱模型——从外到内，逐层深入：\n\n1. **事件层（Event）**：最外层，原始行为数据——你看了什么视频、点了什么赞、收藏了什么内容\n2. **偏好层（Preference）**：从事件中提取结构化偏好——兴趣标签、风格偏好、内容时长偏好\n3. **觉察层（Awareness）**：观察行为模式的变化——最近是不是对某类内容更感兴趣了？情绪状态如何？\n4. **洞察层（Insight）**：形成深层假设——你可能是 INTP 类型？你对「系统化思维」有深层需求？\n5. **灵魂层（Soul）**：最内层，整合所有信息——完整的人格素描、MBTI 推断、核心特质、深层需求"
+            },
+            {
+              "type": "text",
+              "text": "**关键设计理念**：\n\n- **从行为推断心理，而非从标签匹配内容**——传统推荐系统从「你看过机械键盘」推断「你对电子产品感兴趣」。Soul Engine 会进一步推断「你对精密机械结构有审美偏好」，然后跨领域推荐建筑美学内容。\n- **层层递进，逐步深化**——不会一次性产出完整画像，而是随着行为数据的积累逐步加深理解。\n- **双向修正**——用户的反馈（喜欢/不喜欢/聊天）可以反向修正所有层的理解。如果你说「我不喜欢那种肤浅的科普」，系统会调整对「深度偏好」的权重。"
+            }
+          ]
+        },
+        {
+          "title": "核心入口：SoulEngine 初始化与依赖",
+          "anchor": "practice-soul-engine",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`SoulEngine` 是灵魂引擎的顶层协调器，位于 `soul/engine.py`。它不直接处理数据，而是将任务分发到各个子模块。\n\n### 核心依赖关系\n\n```\nSoulEngine\n├── PreferenceAnalyzer    — 偏好分析（从事件中提取兴趣标签）\n├── AwarenessAnalyzer     — 觉察分析（观察行为模式变化）\n├── InsightAnalyzer       — 洞察分析（形成深层假设）\n├── ProfileConsolidator   — 画像整合（合并所有层的结果）\n├── Speculator            — 兴趣推测（主动猜测新兴趣）\n├── AvoidanceSpeculator   — 回避推测（推断用户不喜欢什么）\n├── CognitionCycle        — 认知周期管理（控制画像更新频率）\n├── DialogueAnchor        — 对话锚点（用户聊天中的关键表达）\n├── DialogueSettlementQueue — 对话结算队列（批量处理聊天反馈）\n├── ConfusionManager      — 困惑管理（对不确定的推断暂缓处理）\n├── PostureGate           — 姿态门控（过滤低质量信号）\n├── ProfileLedger         — 画像账本（记录每次变更）\n├── ProfileOverrides      — 画像覆盖（允许用户手动修正）\n├── ProfileBuilder        — 画像构建（将数据组装为 SoulProfile）\n└── ProfileRenderer       — 画像渲染（将画像转为可读文本）\n```"
+            },
+            {
+              "type": "text",
+              "text": "### 关键设计决策：为什么需要这么多子模块？\n\n乍看之下，Soul Engine 的子模块数量惊人。但每个子模块都有明确的职责边界：\n\n- **PreferenceAnalyzer** 处理「确定性」信息——从浏览历史中提取明确的兴趣标签\n- **Speculator** 处理「不确定性」信息——基于心理学桥接逻辑，猜测用户可能感兴趣的新领域\n- **ConfusionManager** 处理「矛盾」信息——当用户行为出现矛盾时（比如既喜欢深度内容又频繁刷短视频），暂缓判断\n- **PostureGate** 处理「噪声」——过滤掉偶然的、不代表真实偏好的行为\n\n这种设计让系统能够区分「确定知道的」、「正在探索的」和「还不确定的」，避免做出过度自信的错误推断。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "// SoulEngine 构造函数（伪代码）\nclass SoulEngine:\n    def __init__(\n        llm,              // LLM 服务\n        memory,           // 记忆管理\n        // --- 推测兴趣配置 ---\n        speculation_interval = 10min,    // 推测生成间隔\n        speculation_ttl = 3days,         // 推测有效期\n        speculation_cooldown = 7days,    // 拒绝后冷却期\n        confirmation_threshold = 3,      // 3次验证 → 提升为正式兴趣\n        max_active_speculations = 5,     // 最大活跃推测数\n        // --- 画像整合配置 ---\n        consolidation_interval = 12h,    // 与认知循环同步\n        // --- 反馈与姿态门控 ---\n        feedback_batch_threshold = 3,    // 3次反馈触发批量处理\n        posture_gate_mode = \"shadow\",    // shadow=仅记录不过滤\n    ):\n        self.llm = llm\n        self.memory = memory\n        // 认知 Prompt 视图：不同层使用不同的压缩策略\n        self.preference_view = normalize_view(preference_prompt_view)\n        self.awareness_view  = normalize_view(awareness_prompt_view)\n        self.insight_view    = normalize_view(insight_prompt_view)",
+                "caption": "SoulEngine 构造函数伪代码：展示核心配置参数与依赖注入"
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心数据结构：SoulProfile 五层画像模型",
+          "anchor": "practice-soul-profile",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`soul/profile.py` 定义了画像的核心数据结构。所有数据类都使用 Python `dataclass`（dataclass 是 Python 的「数据类」装饰器——只需声明字段名和类型，Python 会自动生成构造函数、字符串表示等样板代码，让你不用手写大量重复的初始化逻辑。可以理解为一种「快速定义数据结构」的语法糖）"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "// 核心数据结构（伪代码）\n\n// 带权重的兴趣标签，支持状态机衰减\nInterestTag:\n    name: \"机械键盘\"          // 标签名\n    category: \"科技\"          // 顶级分类\n    weight: 0.0 ~ 1.0        // 权重\n    state: trial → active → decaying → archived\n// 偏好层——从行为中提取的结构化偏好\nPreferenceLayer:\n    interests: [InterestTag]  // 兴趣标签列表\n    style: StylePreference    // 内容风格偏好\n    exploration_openness: 0~1 // 对新领域的开放度\n    disliked_topics: [str]    // 明确不喜欢的主题\n\n// 洞察假设——对用户的深层推断（confidence 是核心设计）\nInsightHypothesis:\n    hypothesis: str           // 假设内容\n    confidence: 0.0 ~ 1.0    // 置信度\n    evidence: [str]           // 支持证据\n\n// 完整灵魂画像——五层模型的总和\nSoulProfile:\n    preferences: PreferenceLayer\n    awareness: [AwarenessNote]\n    insights: [InsightHypothesis]\n    personality: str          // 自然语言人格描述\n    mbti: str                 // MBTI 推断\n    core_traits: [str]        // 核心特质\n    deep_needs: [str]         // 深层心理需求",
+                "caption": "五层画像核心数据结构（伪代码）"
+              }
+            },
+            {
+              "type": "text",
+              "text": "### 设计要点\n\n1. **InterestTag.state** 使用状态机模型：`trial → active → decaying → archived`。新发现的兴趣先进入 trial 状态（试探期），有足够证据后才升级为 active；长期不活跃的兴趣会 decaying 衰减，最终 archived 归档。\n\n2. **InsightHypothesis.confidence** 是关键设计——系统知道自己可能判断错误，所以每个洞察都标注了置信度。低置信度的洞察会被 ConfusionManager 暂缓处理，等待更多证据。\n\n3. **exploration_openness** 控制发现引擎的探索激进程度。如果用户对新内容接受度高，系统会更积极地猜测新兴趣方向。"
+            }
+          ]
+        },
+        {
+          "title": "对话学习：用户如何通过聊天调教系统",
+          "anchor": "practice-soul-dialogue",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Soul Engine 的另一个核心能力是**通过对话学习**。用户可以在聊天界面直接告诉系统自己的偏好，系统会解析这些自然语言表达并更新画像。\n\n### 对话处理流程\n\n```\n用户消息 → DialogueAnchorManager.extract_anchors()\n         → 识别关键表达（\"我喜欢...\" / \"我不喜欢...\" / \"最近对...感兴趣\"）\n         → DialogueSettlementQueue.enqueue()\n         → 批量处理（避免每次对话都触发画像更新）\n         → DialogueInsightAnalyzer.analyze()\n         → 更新画像对应层\n```\n\n### 关键组件\n\n- **`soul/dialogue_anchor.py`**：`DialogueAnchor` 从对话中提取关键表达（锚点）。例如用户说「我最近对 Rust 语言很感兴趣，想找一些深入的教程」，Anchor 会提取出 `兴趣=Rust`、`风格偏好=深度教程`。\n\n- **`soul/dialogue_learn_queue.py`**：`DialogueSettlementQueue` 负责批量处理对话反馈。它不会每句话都触发画像更新，而是积累到一定量或一定时间后再批量结算，避免频繁的 LLM 调用。\n\n- **`soul/dialogue_insight_analyzer.py`**：`DialogueInsightAnalyzer` 对对话进行深度分析，提取其中隐含的偏好信息——用户可能不会直接说「我喜欢深度内容」，但系统可以从「这个视频太浅了，有没有更深入的？」中推断出这一偏好。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "// 画像重建触发机制（伪代码）\n\n// 三种重建触发器，每种对应不同的审计日志写入点\nTRIGGERS = {\n    \"dialogue\":             \"dialogue_soul_rebuild\",      // 对话学习触发\n    \"feedback_batch\":       \"feedback_soul_rebuild\",      // 反馈批次触发\n    \"confirmed_hypotheses\": \"hypotheses_soul_rebuild\",    // 假设确认触发\n}\n\n// 核心不变量：假设只有被验证 AND 置信度 >= 0.75 时才能触发灵魂重建\nMIN_CONFIDENCE = 0.75\n\n// 深层候选类型：只有 goal/value/state 类型的对话学习\n// 才通过姿态门控写入深层画像（interest/dislike 走快速通道）\nDEEP_CANDIDATE_KINDS = {goal, value, state}\n\n// 设计决策：为什么阈值是 0.75 而不是 0.5？\n// 灵魂重建是高成本操作（完整 LLM 调用），且影响所有下游模块。\n// 0.75 确保只有「相当确信」的假设才能触发重建，\n// 避免低质量信号导致画像频繁抖动。",
+                "caption": "画像重建触发机制：三种触发源 + 置信度门控（伪代码）"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Profile Overrides：用户手动修正画像",
+          "anchor": "practice-soul-overrides",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "AI 生成的画像不总是准确的——用户可能不同意系统对自己的理解。`soul/overrides.py` 实现了**用户覆盖机制**，允许用户手动编辑画像，并且这些编辑会在画像重新生成时保留。\n\n### 核心设计：分离存储 + 读取时合并\n\n```python\n# overrides.py — 设计思路\n\n# AI 画像：soul.json（定期由 SoulEngine 重新生成，完全覆盖）\n# 用户编辑：profile_overrides.json（独立存储，永不自动覆盖）\n\n# 读取时合并：\neffective_profile = apply_overrides(ai_profile, user_overrides)\n```\n\n**为什么不直接修改 soul.json？** 因为 SoulEngine 会定期重新生成完整画像，直接修改会被覆盖。分离存储确保用户的编辑不会丢失。\n\n### 四种覆盖类型\n\n```python\n# overrides.py — ProfileOverrides 数据类\n@dataclass\nclass ProfileOverrides:\n    text_pins: dict[str, TextPin]      # 文本字段固定值\n    scalar_pins: dict[str, ScalarPin]  # 数值字段固定值（0-1）\n    list_edits: dict[str, ListEdit]    # 列表字段增删\n    interest_edits: dict[str, InterestPolarityEdit]  # 兴趣树编辑\n```\n\n**TextPin**：固定文本字段（如 `personality_portrait`）。记录用户修改的值和修改时的 AI 值，方便对比。\n\n**ScalarPin**：固定数值字段（如 `exploration_openness`）。用户可以将开放度固定在 0.8，即使 AI 推断为 0.5。\n\n**ListEdit**：列表字段的增删（如 `core_traits`）。支持 `add` 和 `remove` 两个列表，实现精确控制。\n\n**InterestPolarityEdit**：兴趣树的编辑（likes/dislikes）。支持添加领域、删除领域、固定权重、编辑具体兴趣点。"
+            },
+            {
+              "type": "text",
+              "text": "### 可编辑字段白名单\n\n不是所有画像字段都允许用户编辑——只有白名单中的字段可以覆盖：\n\n```python\n# overrides.py — 可编辑字段白名单\nTEXT_FIELDS = (\n    \"personality_portrait\",      # 人格描述\n    \"role.life_stage\",           # 生命阶段\n    \"role.current_phase\",        # 当前阶段\n)\n\nSCALAR_FIELDS = (\n    \"surface.exploration_openness\",           # 探索开放度\n    \"surface.style.quality_sensitivity\",      # 质量敏感度\n    \"surface.style.humor_preference\",         # 幽默偏好\n    \"surface.style.depth_preference\",         # 深度偏好\n)\n\nLIST_FIELDS = (\n    \"core.core_traits\",            # 核心特质\n    \"core.deep_needs\",             # 深层需求\n    \"values_layer.values\",         # 价值观\n    \"values_layer.motivational_drivers\",  # 动机驱动\n    \"surface.cognitive_style\",     # 认知风格\n    \"interest.favorite_up_users\",  # 喜欢的 UP 主\n)\n```\n\n**为什么需要白名单？** 因为某些字段是系统内部使用的（如 MBTI 推断、洞察假设），用户修改这些字段会导致下游逻辑混乱。白名单确保用户只能修改「安全」的字段。"
+            },
+            {
+              "type": "text",
+              "text": "### 确定性合并算法\n\n`apply_overrides()` 函数实现了**确定性合并**——给定相同的 AI 画像和用户覆盖，输出总是相同的：\n\n```python\n# overrides.py — _merge_list() 核心逻辑\ndef _merge_list(current: list[str], edit: ListEdit) -> list[str]:\n    # 1. 移除用户删除的项（大小写/空格不敏感）\n    remove_keys = {_norm(item) for item in edit.remove}\n    result = []\n    for item in current:\n        if _norm(item) not in remove_keys:\n            result.append(item)\n    \n    # 2. 添加用户新增的项（去重）\n    seen = {_norm(item) for item in result}\n    for item in edit.add:\n        if _norm(item) not in seen:\n            result.append(item)\n            seen.add(_norm(item))\n    \n    return result\n```\n\n**关键设计**：\n- `remove` 只抑制 AI 生成的项——如果用户删除了某个特质，即使 AI 下次重新推断出来，也不会出现在最终结果中\n- `add` 无条件追加——用户明确添加的项不会被 AI 覆盖\n- 大小写/空格不敏感去重——避免「编程」和「编程 」被视为不同项\n\n**兴趣树编辑**：`InterestPolarityEdit` 支持更精细的操作：\n- `add_domains`：添加新兴趣领域（可带具体兴趣点）\n- `remove_domains`：删除整个领域\n- `weight_pins`：固定某个领域的权重（AI 无法调整）\n- `specific_edits`：编辑某个领域下的具体兴趣点"
+            }
+          ]
+        },
+        {
+          "title": "核心流程：画像更新管道（ProfileUpdatePipeline）",
+          "anchor": "practice-soul-pipeline",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`soul/pipeline.py` 中的 `ProfileUpdatePipeline` 是画像更新的核心执行器。它定义了五层处理流程，每层都有独立的处理器。\n\n### 管道执行流程\n\n```\n原始事件 → signal_from_event() → PostureGate.gate() → 逐层处理 → 画像输出\n                                    ↓ (拒绝)\n                                丢弃（噪声）\n```\n\n1. **信号提取**：`signal_from_event()` 将原始事件（如「观看了视频BV1xx」）转化为 `ProfileSignal`（包含事件类型、内容ID、平台来源等）\n2. **姿态门控**：`PostureGate.gate()` 判断这个信号是否值得处理。如果用户只是快速划过（< 3秒浏览），可能被过滤掉\n3. **逐层处理**：信号依次经过 Preference → Awareness → Insight → Soul 四层，每层都可能产生更新\n4. **合并输出**：`ProfileConsolidator` 将各层的结果合并为最终的 `SoulProfile`"
+            },
+            {
+              "type": "callchain",
+              "callchain": {
+                "endpoint": "ProfileUpdatePipeline.process_batch()",
+                "steps": [
+                  {
+                    "layer": "Pipeline",
+                    "filePath": "soul/pipeline.py",
+                    "functionName": "process_batch()",
+                    "explanation": "接收一批原始事件，先通过 PostureGate 过滤低质量信号，然后依次调用各层处理器。每层处理完成后，将结果传递给下一层。",
+                    "keyPoint": "管道模式的精髓在于：每层只关心自己的职责，层与层之间通过标准化的 ProfileSignal 传递数据"
+                  },
+                  {
+                    "layer": "Preference",
+                    "filePath": "soul/preference_analyzer.py",
+                    "functionName": "PreferenceAnalyzer.analyze()",
+                    "explanation": "偏好分析器从事件中提取结构化偏好。它使用 LLM 对事件进行分类，提取兴趣标签（如「科技/编程」）、风格偏好（如「喜欢深度长视频」）、内容时长偏好等。",
+                    "keyPoint": "偏好层是唯一直接与 LLM 交互的层——它需要 LLM 的语言理解能力来推断用户兴趣"
+                  },
+                  {
+                    "layer": "Awareness",
+                    "filePath": "soul/awareness_analyzer.py",
+                    "functionName": "AwarenessAnalyzer.analyze()",
+                    "explanation": "觉察分析器观察行为模式的变化趋势。它不关心单个事件，而是关注「最近这个用户的行为发生了什么变化」——比如是否突然对某个新领域产生了兴趣。",
+                    "keyPoint": "觉察层关注的是「变化」而非「状态」——它核心回答的问题是：用户的兴趣在往哪个方向演变？"
+                  },
+                  {
+                    "layer": "Insight",
+                    "filePath": "soul/insight_analyzer.py",
+                    "functionName": "InsightAnalyzer.analyze()",
+                    "explanation": "洞察分析器形成深层假设。它基于偏好和觉察的结果，推断用户的 MBTI 类型、认知风格、深层心理需求。这些假设带有置信度，会随着更多证据的积累而调整。",
+                    "keyPoint": "洞察层的输出是「假设」而非「事实」——每个 InsightHypothesis 都带有 confidence 字段，表示置信度"
+                  },
+                  {
+                    "layer": "Soul",
+                    "filePath": "soul/consolidator.py",
+                    "functionName": "ProfileConsolidator.consolidate()",
+                    "explanation": "画像整合器将所有层的结果合并为完整的 SoulProfile。它处理层间的矛盾和冲突——比如偏好层说用户喜欢深度内容，但觉察层发现用户最近在刷短视频。",
+                    "keyPoint": "整合层的核心职责是处理「矛盾」——当不同层给出不同结论时，它需要做出综合判断"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "// analyze_events() 核心流程（伪代码）\n\nasync def analyze_events(events, existing_preference):\n    events = filter_events(events)  // 过滤满意度事件\n\n    // 关键设计：大批次自动拆分并发，避免单次 LLM 调用超时\n    if len(events) >= chunk_size:\n        return await analyze_chunked(events)  // 并发调用 LLM，逐层合并\n\n    // 单批次路径：构建 Prompt 并检查是否超出 token 预算\n    prompt = build_preference_analysis_prompt(events, existing_preference)\n\n    if prompt_chars > max_prompt_chars:\n        // Prompt 太长 → 自动拆分为适配窗口的 chunk\n        return await analyze_chunked(plan_fitting_chunks(events))\n\n    // 正常单批次分析\n    return await analyze_single(events)",
+                "caption": "analyze_events() 伪代码：自动分片并发 + Prompt 预算自适应"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Speculator：兴趣推测与主动破茧",
+          "anchor": "practice-soul-speculator",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 20,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`soul/speculator.py` 是 Soul Engine 中最具创新性的模块。传统推荐系统只会推荐「和你看过的内容相似」的东西，这必然导致信息茧房。Speculator 的职责是主动打破这个循环——基于心理学桥接逻辑，猜测用户可能感兴趣但从未接触过的领域。\n\n### 心理学桥接逻辑\n\n桥接逻辑的核心是：**兴趣之间存在隐式的心理关联，这种关联不依赖于「协同过滤」中的共现关系**。\n\n例如：\n- 喜欢机械表的人 → 可能对建筑美学感兴趣（共享「精密结构美学」）\n- 看量子物理科普的人 → 可能对哲学感兴趣（共享「对底层规律的追问」）\n- 关注古生物的人 → 可能对地质学感兴趣（共享「时间尺度的宏大叙事」）\n\n这些关联不是通过「喜欢A的人也喜欢B」的统计学方法发现的，而是通过 LLM 对兴趣本质的语义理解推断出来的。"
+            },
+            {
+              "type": "text",
+              "text": "### 推测策略\n\n```\n现有兴趣 → Speculator.speculate() → 推测兴趣列表\n                ↓\n        LLM: \"基于心理学桥接，这个用户可能喜欢...\"\n                ↓\n        每个推测兴趣进入 trial 状态\n                ↓\n        DiscoveryEngine 按推测方向搜索内容\n                ↓\n        用户反馈 → 验证或否定推测\n```\n\n1. **推测生成**：Speculator 接收用户当前的兴趣标签，通过 LLM 生成可能的「桥接兴趣」\n2. **试探性推荐**：每个推测兴趣以 trial 状态加入画像，DiscoveryEngine 会按此方向搜索少量内容\n3. **反馈验证**：如果用户对试探内容表现出兴趣（点击、浏览时长 > 阈值），trial 升级为 active；如果用户明确不感兴趣，推测被丢弃\n\n**关键设计**：推测兴趣的推荐频率远低于 confirmed 兴趣，确保用户不会因为大量不相关的推荐而感到困扰。"
+            },
+            {
+              "type": "text",
+              "text": "### 推测兴趣的生命周期\n\nSpeculator 实现了一个完整的**兴趣生命周期管理系统**。每个推测兴趣都有自己的状态机：\n\n```\nGenerate → Active → Promote (confirmed) / Reject + Cooldown (expired)\n                 ↓\n            Deferred (暂时忽略) → Revived (延迟到期后复活)\n```\n\n**核心状态**：\n- **active**：推测刚生成，正在等待用户行为验证\n- **confirmed**：已达到确认阈值（默认 3 次确认事件）\n- **promoted**：已提升为正式兴趣\n- **rejected**：TTL 过期或用户明确拒绝\n- **deferred**：用户选择「暂时忽略」，进入延迟状态\n\n### Tick 循环：周期性状态转换\n\nSpeculator 通过 `tick()` 方法周期性运行状态转换，顺序固定——先过期、再提升、再复活、最后生成：\n\n```\ntick() 流程：\n1. 过期处理：TTL 到期的推测 → rejected\n2. 提升处理：达到确认阈值的推测 → promoted\n3. 复活处理：延迟到期的 deferred → active\n4. 生成新推测（如果门控条件满足）\n```\n\n这确保了：过期的推测不会占用新生成的名额；提升的兴趣不会在同一轮被复活；新生成的推测不会与刚复活的重复。"
+            },
+            {
+              "type": "text",
+              "text": "### 确认机制：关键词匹配（无 LLM）\n\nSpeculator 的 `observe()` 方法使用**关键词匹配**而非 LLM 来判断用户行为是否确认了某个推测：\n\n```\nobserve_events() 伪代码：\nfor each event:\n    event_text = 构建事件文本\n    for each active_speculation:\n        // 1. Bigram 匹配（中文）：提取相邻双字符组合取交集\n        if event_tokens ∩ chinese_bigrams(spec.domain) ≠ ∅:\n            spec.confirmation_count += 1\n        // 2. 关键词匹配\n        elif text_matches_keywords(event_text, spec.domain):\n            spec.confirmation_count += 1\n```\n\n**为什么不用 LLM？** 因为确认判断需要高频执行（每次用户行为都要检查），而 LLM 调用成本高、延迟大。关键词匹配 + 中文 bigram 足以覆盖大部分场景，且速度极快。\n\n**Bigram 匹配**：对于中文领域名如「AI图像生成工作流深度拆解」，传统的分词方法会失败（没有分隔符）。Bigram（二元组）是一种简单的文本切分方法——从文本中依次取出每两个相邻字符组成一个组合（例如「AI图像」→「AI」「I图」「图像」「像生」「生成」「成工」……），然后与事件文本的 token 取交集，提供足够的匹配粒度。虽然会产生很多无意义的组合（如「成工」），但只要有足够多的有意义组合命中（如「图像」「生成」），就能可靠地判断匹配关系。"
+            },
+            {
+              "type": "text",
+              "text": "### 生成门控：什么时候触发新推测？\n\n`_should_generate()` 方法实现了多层门控逻辑，避免过度生成：\n\n```\n_should_generate() 伪代码：\nactive_count = 当前活跃推测数\navailable_slots = near_slots + challenge_slots  // 两类槽位独立限制\n\nreturn False if:\n    - available_slots < 2      // 槽位不足（1个时 LLM 倾向重复）\n    - active_count >= max      // 已达主兴趣上限\n    - 时间间隔未到             // 距上次生成不足 speculation_interval\nreturn True\n```\n\n**槽位机制**：Speculator 维护两类槽位——near（常规兴趣）和 challenge（挑战型兴趣，如 lateral/bridge/wildcard 模式）。两类槽位独立限制，确保挑战型推测不会挤占常规兴趣。\n\n**死锁预防**：旧版本中，如果用户已有大量 confirmed 兴趣，active 推测会被永久阻塞。修复后，门控只看 active 数量，不看 confirmed + active，确保推测循环不会因用户画像丰富而停止。\n\n### 延迟机制：「暂时忽略」的升级阶梯\n\n当用户对某个推测选择「暂时忽略」时，系统采用**升级阶梯**：\n\n```\n延迟配置（伪代码）：\nDEFER_DAYS = (7, 14)       // 第1次延迟7天，第2次14天\nMAX_DEFERS = 3             // 最多3次延迟\nEXHAUSTION_COOLDOWN = 30天 // 延迟用尽后30天冷却\n\ndefer(domain):\n    if defer_count < MAX_DEFERS:\n        days = DEFER_DAYS[min(defer_count, len-1)]  // 阶梯递增\n        spec.deferred_until = now + days\n        spec.status = 'deferred'\n        defer_count += 1   // 终身计数，永不重置\n    else:\n        spec.status = 'rejected'\n        spec.cooldown_until = now + 30天\n```\n\n**为什么用阶梯而不是固定延迟？** 用户多次选择「暂时忽略」通常意味着兴趣不大。阶梯延迟让系统逐渐减少打扰，同时给用户「改变主意」的机会。3 次延迟后用尽进入 30 天冷却期，但**不是永久拒绝**——冷却期后仍可重新生成。\n\n### AvoidanceSpeculator：反向推测\n\n`soul/avoidance_speculator.py` 是 Speculator 的镜像——它推测用户**不喜欢**什么。这同样重要：\n\n- 如果用户对「标题党」风格的视频多次表达不满，AvoidanceSpeculator 会推断出「排斥 clickbait 内容」\n- 这个信息被传递给 DiscoveryEngine，在候选内容评分时作为负面因子\n- 同时也会影响推荐表达（RecommendationEngine 会避免用类似的语气来描述推荐）"
+            }
+          ]
+        },
+        {
+          "title": "CognitionCycle：12 小时节流的认知循环",
+          "anchor": "practice-soul-cognition-cycle",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 18,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Soul Engine 的画像更新不是实时的——它通过 `CognitionCycle` 控制更新频率，避免频繁调用 LLM 导致成本失控。这个循环每 12 小时运行一次，但在特定条件下可以提前触发。\n\n### 核心设计：节流 + 早期触发\n\n```\n核心配置（伪代码）：\nMIN_INTERVAL = 12小时        // 节流周期\nAWARENESS_BACKLOG_CAP = 900  // 最多处理 900 个事件\nEVENT_BATCH_SIZE = 300       // 每批 300 个事件\nINSIGHT_NOTE_CAP = 450       // 最多处理 450 条觉察笔记\nEARLY_TRIGGER_COUNT = 30     // 30 个事件触发早期运行\n```\n\n**为什么需要节流？** 因为觉察（Awareness）和洞察（Insight）的生成都需要调用 LLM。如果每次用户行为都触发画像更新，LLM 成本会指数级增长。12 小时节流确保每天最多 2 次 LLM 调用。\n\n**早期触发条件**：\n\n```\n_should_early_trigger() 伪代码：\nrows = query_events(after=watermark, limit=30)\n\n// 条件1：积累了 >= 30 个事件\nif len(rows) >= 30: return True\n\n// 条件2：有强信号事件（comment/danmaku/reply/feedback）\n// 这些事件携带明确文本内容，代表用户显式意图\nif any(is_strong_signal(row) for row in rows): return True\n```\n\n**强信号事件**：`comment`、`danmaku`、`reply`、`feedback` 这些事件携带明确的文本内容，代表用户的显式意图。如果用户刚发了一条弹幕「这个视频太棒了」，系统不需要等 12 小时才更新画像。"
+            },
+            {
+              "type": "text",
+              "text": "### 游标式增量读取\n\nCognitionCycle 不是每次都读取所有事件——它使用**游标式增量读取**，只处理上次运行后的新事件：\n\n```\n_run_awareness() 伪代码：\nwatermark = state['last_awareness_event_id']  // 上次进度\n\n// 1. 只读取 watermark 之后的事件\nrows = query_events(after=watermark, limit=900)\n\n// 2. 分批处理（每批 300 个事件）\nfor batch in chunk(rows, 300):\n    new_notes = await awareness_analyzer.analyze(batch)\n    // 3. 每批处理后立即更新 watermark\n    watermark = max(watermark, max_id(batch))\n    state['last_awareness_event_id'] = watermark\n    save_state(state)  // 立即持久化，确保进度不丢失\n```\n\n**为什么需要游标？** 因为如果一次性处理 1000 个事件，LLM 调用可能超时或失败。分批处理 + 每批持久化 watermark 确保：\n- 如果第 2 批失败，第 1 批的进度不会丢失\n- 下次运行时只从上次失败的批次继续\n\n**回溯窗口**：第一批还会包含 10 个已处理的旧事件（`_AWARENESS_CONTEXT_LOOKBACK = 10`），让 LLM 了解趋势上下文。"
+            },
+            {
+              "type": "text",
+              "text": "### 两阶段处理：Awareness → Insight\n\nCognitionCycle 分两个阶段运行：\n\n```\n阶段 1: Awareness（觉察）\n  输入: 原始事件（view/like/favorite/comment）\n  输出: AwarenessNote（行为模式观察）\n  示例: \"用户最近 3 天对机械键盘内容兴趣显著增加\"\n\n阶段 2: Insight（洞察）\n  输入: AwarenessNote\n  输出: InsightHypothesis（深层假设）\n  示例: \"用户可能对精密机械结构有审美偏好（置信度 0.7）\"\n```\n\n**为什么分两阶段？** 因为 Insight 需要基于 Awareness 的结果——先观察行为模式变化，再推断深层心理需求。如果直接从事件推断 Insight，LLM 会缺少上下文。\n\n**Insight 的游标**：Insight 使用 `last_insight_awareness_index`（位置游标）而不是事件 ID，因为觉察笔记是 append-only 的：\n\n```\n_run_insight() 伪代码：\nall_notes = load_awareness_notes()\ncursor = state['last_insight_awareness_index']\nnew_notes = all_notes[cursor:]  // 只处理新增的笔记\n\nfor batch in chunk(new_notes, batch_size):\n    new_insights = await insight_analyzer.analyze(\n        awareness_notes=batch,\n        existing_insights=已有假设,  // 传入已有假设，避免重复\n    )\n    cursor += len(batch)\n    state['last_insight_awareness_index'] = cursor\n```"
+            },
+            {
+              "type": "text",
+              "text": "### 重试机制与状态持久化\n\nLLM 调用可能失败（网络超时、JSON 格式错误）。CognitionCycle 实现了**单次重试**机制：\n\n```\n_awareness_with_retry() 伪代码：\ntry:\n    return await awareness_analyzer.analyze(events, preference)\nexcept AwarenessGenerationError:\n    sleep(2秒)  // 退避等待\n    return await awareness_analyzer.analyze(events, preference)\n    // 仍然失败则放弃——继续重试只浪费资源\n```\n\n**为什么只重试一次？** 因为大多数 LLM 失败是暂时性的（如 JSON 格式错误、502 错误）。2 秒退避足以躲过大部分暂时性故障。如果重试仍然失败，说明是更深层的问题（如 prompt 太长），继续重试只会浪费资源。\n\n**状态持久化**：CognitionCycle 的状态（`last_awareness_at`、`last_awareness_event_id` 等）保存在 `data/memory/cognition_cycle_state.json`。使用**原子写入**（Atomic Write，即写入操作要么完整成功、要么完整失败，不会出现写了一半的状态）防止进程崩溃导致状态文件损坏——具体做法是先写入临时文件，确认写入成功后再用 rename 操作替换原文件，就像你先把信写好放进信封，确认无误后再投递，而不是直接在原件上涂改：\n\n```\n_save_state() 伪代码：\nwrite state → tmp_file\nfsync(tmp_file)          // 确保写入磁盘\natomic_replace(tmp_file → state_file)  // 原子替换\n```"
+            },
+            {
+              "type": "text",
+              "text": "### 与 ProfileUpdatePipeline 的关系\n\nCognitionCycle 和 ProfileUpdatePipeline 是两个独立的画像更新机制：\n\n| 机制 | 触发频率 | 输入 | 输出 | LLM 调用 |\n|------|---------|------|------|----------|\n| ProfileUpdatePipeline | 每批事件（实时） | 原始事件 | 偏好层更新 | 是（PreferenceAnalyzer） |\n| CognitionCycle | 每 12 小时（或早期触发） | 事件 + 觉察笔记 | 觉察 + 洞察层更新 | 是（Awareness + Insight） |\n\n**为什么需要两个机制？** 因为 Preference 层需要实时更新（用户刚看了机械键盘，立即更新兴趣标签），但 Awareness 和 Insight 不需要——它们关注的是长期趋势，12 小时更新一次足够。\n\n**数据流**：\n\n```\n用户行为 → ProfileUpdatePipeline（实时）\n           → 更新 Preference 层（兴趣标签、风格偏好）\n           → 写入事件存储\n\n           → CognitionCycle（12 小时）\n           → 读取事件存储\n           → 更新 Awareness 层（行为模式观察）\n           → 更新 Insight 层（深层假设）\n           → 同步到 SoulProfile\n```"
+            }
+          ]
+        },
+        {
+          "title": "Confusion 认知对象与边界处理",
+          "anchor": "practice-soul-confusion",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Confusion 是 OpenBiliClaw 中最独特的认知对象——它代表系统「看不懂」的用户行为。当系统观察到无法清晰解读的行为时，不会强行推断，而是生成一个 Confusion 对象，进入暂缓处理状态。\n\n### Confusion 的来源\n\nConfusion 有两个产生来源：\n\n1. **Awareness 分析**：12 小时认知循环中，Awareness 模型会标记「 genuinely unsure how to interpret」的观察\n2. **推测僵局（Stalemate）**：当推测兴趣过期但已有部分确认（`0 < confirmation_count < threshold`）时，这种模糊性本身就是 Confusion\n\n```\n僵局检测（伪代码）：\nstalemate = [spec for spec in rejected\n             if 0 < spec.confirmation_count < spec.confirmation_threshold]\n// 部分确认但未达阈值 = 僵局\n```\n\n**为什么僵局是 Confusion？** 因为用户既没有明确接受（达到阈值会 promote），也没有明确拒绝（count=0 是干净拒绝）。这种「半确认」状态代表系统对用户兴趣的真实困惑。"
+            },
+            {
+              "type": "text",
+              "text": "### Confusion 的状态机\n\n```\nopen ──claim──▶ clarifying ──▶ resolved | dismissed\n  │                              (三种退出：promote / direct-settle /\n  └──────── expire (TTL) ──▶ expired      dismissed)\n```\n\n**核心不变量**：Confusion **从不直接写入画像**（spec §invariant 8）。它只驱动下游的澄清行为（ask / probe / wait）和主题冻结反射。\n\n**状态说明**：\n- **open**：刚生成，等待处理\n- **clarifying**：正在通过对话或行为验证来澄清\n- **resolved**：已解决（推断出真实兴趣或代理行为）\n- **dismissed**：已忽略（证据不足或用户拒绝澄清）\n- **expired**：TTL 过期（14 天内无新证据）\n\n**并发控制**：最多只有一个 Confusion 处于 `clarifying` 状态——通过数据库的部分唯一索引强制执行（持久化的 ask 预算）。这防止了系统同时向用户提出多个澄清问题。"
+            },
+            {
+              "type": "text",
+              "text": "### HeldUpdate：主题冻结机制\n\n当 Confusion 处于 active 状态时，相关主题的权重更新会被**冻结**——新的兴趣标签和权重升级会被暂存到 `HeldUpdate` 列表中：\n\n```\nHeldUpdate（伪代码）：\n    held_id: str\n    topic: str\n    kind: 'new' | 'upgrade'\n    state: held → replaying → applied | discarded\n    replay_attempts: int   // 最多重放 2 次\n```\n\n**为什么需要冻结？** 防止在系统「看不懂」的时候进一步强化困惑主题。例如：\n- 系统困惑：「用户既喜欢深度技术内容，又频繁刷搞笑视频」\n- 此时如果用户又看了一个技术视频，系统不会立即增加技术主题的权重\n- 而是将这次更新暂存为 HeldUpdate，等待 Confusion 解决后再决定\n\n**解决后的处理**：\n- **resolved**：HeldUpdate 进入 replay 状态，在下一轮偏好分析中重新提交\n- **dismissed / expired**：HeldUpdate 被丢弃\n\n**重放保护**：HeldUpdate 最多重放 2 次（`MAX_REPLAY_ATTEMPTS = 2`）。持续失败的重放会被丢弃，防止无限循环。"
+            },
+            {
+              "type": "text",
+              "text": "### 校准常量与 ConfusionManager\n\nConfusion 模块中有多个经过校准的常量，控制系统的行为边界：\n\n```\n校准常量（伪代码）：\nMAX_CONFUSION_PER_ROUND = 2   // 每轮 Awareness 最多 2 个 Confusion\nASK_COOLDOWN = 72小时         // 同一 Confusion 的提问冷却\nWAIT_TTL = 14天               // Wait 路径的 TTL\nMAX_REPLAY_ATTEMPTS = 2       // HeldUpdate 最大重放次数\n```\n\n**为什么每轮最多 2 个 Confusion？** 防止「话多」的 Awareness 模型一次性生成大量 Confusion，淹没用户的 ask 预算。\n\n**为什么 ask 冷却 72 小时？** 匹配单用户的中断预算（≤1 次提问 / 3 天）。如果用户对某个 Confusion 选择「稍后再说」，系统不会在短期内再次提问。\n\n**为什么 wait TTL 14 天？** 匹配推测兴趣的 wait 窗口。如果 14 天内没有行为信号解决 Confusion，系统认为证据不足，自动过期。\n\n### ConfusionManager：处理矛盾信号\n\n`soul/confusion.py` 中的 `ConfusionManager` 处理用户行为中的矛盾。例如：\n\n- 用户既给深度技术视频点赞，又频繁刷搞笑短视频\n- 用户说「我喜欢深度内容」，但实际浏览行为偏向浅层内容\n\n当系统检测到矛盾时，ConfusionManager 不会强行选择一边，而是：\n1. 标记矛盾区域为「困惑」状态\n2. 降低相关画像字段的置信度\n3. 等待更多证据来澄清\n4. 如果矛盾持续存在，在画像中标注「用户对此领域态度复杂」\n\n### PostureGate：过滤低质量信号\n\n`soul/posture_gate.py` 中的 `PostureGate` 是画像更新的第一道防线。它过滤掉：\n\n- **快速划过**：浏览时间 < 阈值的视频（用户可能只是扫了一眼）\n- **偶然行为**：频率过低的行为模式（不能代表真实偏好）\n- **污染信号**：来自不信任来源的数据\n\n**为什么需要这个？** 如果没有 PostureGate，用户偶尔点开一个不感兴趣的视频也可能被系统误判为偏好，导致推荐质量下降。"
+            }
+          ]
+        },
+        {
+          "title": "Profile Views：画像→Prompt 的序列化门面",
+          "anchor": "practice-soul-profile-views",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`soul/profile_views.py` 是画像到 LLM Prompt 的**唯一序列化门面**（single serializer façade）。所有将画像对象转为 Prompt 文本/字典的函数都集中在这里，确保发现、推荐、运行时等下游模块不会各自发明私有序列化器。\n\n### 四个核心视图\n\n| 视图函数 | 用途 | 关键约束 |\n|---------|------|----------|\n| `build_profile_summary` | 规范结构化画像（不含肖像）| 所有平台内容 Prompt 的数据源 |\n| `compact_content_prompt_profile_summary` | 裁剪版，用于高吞吐量内容 Prompt | 核心 20 / 兴趣 48 / 域 32×16 |\n| `build_query_generation_profile_summary` | 查询裁剪的品味形状，用于发现关键词生成 | 兴趣域 ≤16，兴趣标签 ≤64 |\n| `build_cognition_profile_view_v1` | **认知专用**：无上限、确定性投影，拆分为缓存稳定的 soul/preference + 易变上下文 | Token Diet Phase 2 |\n\n### 设计原则\n\n1. **单一门面**：下游模块（discovery/recommendation/runtime/sources）消费这些视图，而不是自己写序列化逻辑\n2. **向后兼容**：`discovery/strategies/_utils.py` 保留 re-export stubs，所有旧导入路径仍然有效\n3. **截断策略**：列表按权重排序后截断，确保最强的兴趣存活，而不是按代码点顺序丢弃\n4. **不喜欢主题永不截断**：`_DISLIKED_TOPICS_CAP` 匹配存储上限，避免按字母顺序丢弃"
+            },
+            {
+              "type": "text",
+              "text": "### Profile-Usage 注册表\n\n`docs/profile-usage.md` 维护了一个完整的「画像消费表面」注册表——每一行对应一个消费画像的表面，确保每个阶段的定制是有意为之的，肖像边界可审计。\n\n### 关键消费者\n\n| 表面 | 视图 | 肖像？ |\n|------|------|--------|\n| 推荐评估/表达 | `compact(build_profile_summary(...))` | 否 |\n| 发现评估 | `compact_evaluation_profile_summary` | 否 |\n| 搜索关键词生成 | `build_query_generation_profile_summary` | 否 |\n| 认知循环（compact-v1）| `build_cognition_profile_view_v1` | 否 |\n| 聊天（苏格拉底对话） | `chat_core_memory` → `render_core_memory_blocks` | 是 |\n| 推测兴趣生成 | `profile_views.speculation` | 否 |\n| 整合器判断 | `inject_core_memory=False` | 否 |\n\n### Event Prompt Views：认知 Prompt 的确定性投影\n\n`soul/event_prompt_views.py`（292 行）是 **LLM Token Diet Phase 2** 核心模块。它解决了一个关键问题：认知循环每次调用 LLM 时，都会将完整的事件账本序列化为 JSON——但这些事件中充斥着内部传输字段（`browser_context`、`dom_snapshot`、`idempotency_key` 等），消耗了大量 Token 却对 LLM 毫无帮助。\n\n#### 两种输入视图\n\n| 视图 | 说明 | 适用场景 |\n|------|------|----------|\n| `legacy` | 完整事件序列化（向后兼容） | 调试、基准测试 |\n| `compact-v1` | **确定性投影**：移除内部字段 + URL 去冗余 + 元数据净化 | 生产环境 |\n\n#### 投影规则\n\n`compact-v1` 视图执行三层净化：\n\n1. **内部字段移除**：`_INTERNAL_EVENT_FIELDS` 精确匹配 denylist（15 个已知内部字段），**未知字段保留**——因为未知的 metadata 是语义证据，不是垃圾\n2. **URL 去冗余**：当内容已有 `bvid`/`video_id` 等标识符时，移除冗余的 `url` 字段\n3. **元数据净化**：递归移除 JSON 中的内部键，截断畸形 metadata 到 512 字符\n\n```\nCognitionEventViewV1（伪代码）：\n    events: tuple            // 不可变事件元组（投影后）\n    removed_field_count: int // 移除的字段数\n    source_characters: int   // 原始字符数\n    rendered_characters: int // 渲染后字符数\n\n    from_events(events):\n        for each event:\n            projected = remove_internal_fields(event)  // 15个 denylist 字段\n            projected = remove_redundant_urls(projected)\n            projected = sanitize_metadata(projected)   // 截断畸形 metadata\n        return CognitionEventViewV1(\n            events = tuple(projected),\n            stats = (removed_count, source_chars, rendered_chars)\n        )\n```\n\n**核心输出**：`CognitionEventViewV1` 包含投影后的事件元组 + 统计信息（`removed_field_count`、`source_characters`、`rendered_characters`），供后续评估投影效果。"
+            }
+          ]
+        },
+        {
+          "title": "加权洞察上下文：认知 Prompt 的智能选择",
+          "anchor": "practice-soul-weighted-insight-context",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`soul/cognition_cycle.py` 中的洞察分析需要传入**已有假设**作为上下文——让 LLM 知道「系统已经推测过什么」，避免重复生成相同假设。v0.3.200 引入了**加权洞察上下文选择**（Weighted Insight Context），替代了之前简单的「最近 20 条 + 已判断 20 条」固定窗口。\n\n### 为什么需要加权？\n\n生产环境测量发现：441 条持久化假设（79,558 字符），但最近 20 条只需 3,724 字符。如果全部传入，会浪费大量 Token；如果只取最近的，可能遗漏与当前事件高度相关的旧假设。\n\n### 五维度评分公式\n\n```python\n_INSIGHT_RELEVANCE_WEIGHT = 0.35    # 与当前事件/画像的相关性\n_INSIGHT_RECENCY_WEIGHT = 0.25      # 时间衰减（半衰期 40 条）\n_INSIGHT_VERDICT_WEIGHT = 0.20      # 是否已被用户判断（confirmed/rejected）\n_INSIGHT_QUALITY_WEIGHT = 0.15      # 置信度 + 证据数量\n_INSIGHT_RECURRENCE_WEIGHT = 0.05   # 特征签名重复次数\n```\n\n### 选择策略：四阶段填充\n\n| 阶段 | 配额 | 策略 |\n|------|------|------|\n| Judged Reserve | 8 | 最近已判断的假设（硬保留）|\n| Recent Reserve | 8 | 最新的假设（硬保留）|\n| Relevance Lane | 16 | 按相关性排序 + 多样性惩罚 |\n| Importance Lane | 8 | 按质量 + verdict + recurrence 排序 |\n\n**多样性保护**：`_INSIGHT_NEAR_DUPLICATE_THRESHOLD = 0.82`——如果两条假设的特征相似度 ≥ 0.82，同一状态（confirmed/rejected/unjudged）下只保留一条。"
+            },
+            {
+              "type": "text",
+              "text": "### 降级机制\n\n加权选择是一个**优化**，不是认知循环的所有者。如果加权选择器抛出异常（例如 legacy 文本格式意外），`CognitionCycle` 会捕获异常并降级到固定的 bounded view：\n\n```python\ntry:\n    prompt_context = _select_insight_prompt_context(...)\nexcept Exception:\n    logger.exception(\"Weighted insight context selection failed; using fixed bounded fallback\")\n    prompt_context = _select_fixed_insight_prompt_context(existing)\n```\n\n这确保了认知循环的**韧性**——优化失败不会阻塞画像更新。"
+            }
+          ]
+        },
+        {
+          "title": "Consolidator：LLM 驱动的兴趣合并",
+          "anchor": "practice-soul-consolidator",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`soul/consolidator.py` 解决了一个真实画像的核心痛点：兴趣标签和不喜欢主题的措辞变体无限累积——合并路径只折叠精确的 `(name, category)` 匹配，权重衰减永远不会移除持续被强化的变体。这导致权重排序的 top-48（实际进入 LLM Prompt 的切片）被同一概念的重复项占据一半，挤掉了真正不同的兴趣。\n\n### 五阶段合并管线\n\n```\n1. 规则层 → 同名同类别直接合并（无 LLM）\n2. 聚类层 → 高召回相似度图（embedding + 词汇重叠）分组\n3. 无合并记忆 → 已判断为「不同」的配对不再重问\n4. LLM 判断 → 批量调用（32 集群/调用）返回 merge/keep 操作\n5. 确定性应用 → 验证每个操作并应用到偏好层\n```\n\n### 关键设计\n\n- **边界扩展**：likes 边界从 128 扩展到 512，覆盖整个有意义的存储\n- **相似度阈值**：likes 使用 0.80（召回导向），dislikes 保持 0.85（严格）\n- **稳态零成本**：无合并记忆确保稳态运行零 LLM 调用\n- **审计追踪**：每次运行写入 before-snapshot 到 `consolidation_runs/`，支持回滚"
+            }
+          ]
+        },
+        {
+          "title": "模块总结：关键指标与性能参数",
+          "anchor": "practice-soul-summary",
+          "groupTitle": "Soul Engine 灵魂引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 5,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 灵魂引擎关键指标\n\n| 指标 | 数值 | 说明 |\n|------|------|------|\n| 代码规模 | **26,638+ 行** | 37 个子模块（含 profile_views + event_prompt_views） |\n| 画像层数 | **5 层** | Event→Preference→Awareness→Insight→Soul |\n| 事件类型 | **17 种** | view/like/favorite/comment/dialogue 等 |\n| 偏好分析批次 | **200 事件/批** | 最大 4096 tokens |\n| 觉察上限 | **900 事件** | 每批 300 个事件 |\n| 洞察上限 | **450 笔记** | 基于觉察结果 |\n| 认知循环间隔 | **12 小时** | 默认节流周期 |\n| 早期触发阈值 | **30 事件** | 或强信号事件（comment/danmaku/reply/feedback） |\n| 回溯窗口 | **10 事件** | 第一批包含旧事件提供上下文 |\n| 重试退避 | **2 秒** | 单次重试机制 |\n| 推测兴趣 TTL | **14 天** | 默认有效期 |\n| 确认阈值 | **3 次** | 达到后提升为正式兴趣 |\n| 延迟阶梯 | **7→14→30 天** | 3 次延迟后用尽 |\n| Confusion 上限 | **2 个/轮** | 防止淹没 ask 预算 |\n| Ask 冷却 | **72 小时** | 同一 Confusion 的提问间隔 |\n| Wait TTL | **14 天** | 无证据自动过期 |\n| HeldUpdate 重放 | **2 次** | 持续失败则丢弃 |\n| 负样本半衰期 | **14 天** | exp(-age/14) |\n| 负样本上限 | **16 条** | MAX_LIMIT |\n| Trial 证据阈值 | **5 次** | 升级为 active |\n| Trial 周期 | **7 天** | 试探期 |\n| 衰减周期 | **30 天** | 不活跃后开始衰减 |\n| 归档周期 | **30 天** | 衰减后归档 |\n| 探索开放度 | **0.0~1.0** | 控制发现激进程度 |\n| 不喜欢主题上限 | **128 条** | 存储上限 |\n| 画像字段白名单 | **13 个** | 可编辑字段 |\n| 整合器 likes 边界 | **512 条** | 覆盖整个有意义存储 |\n| 整合器相似度阈值 | **0.80/0.85** | likes 召回导向/dislikes 严格 |\n| 加权洞察总上限 | **40 条** | 最近 8 + 已判断 8 + 相关 16 + 重要 8 |\n| 洞察近重复阈值 | **0.82** | 同状态下去重 |\n| compact-v1 内部字段 | **15 个** | 精确匹配 denylist |\n\n### 设计亮点\n\n1. **五层画像模型**：从事件到灵魂层层递进，逐步深化理解\n2. **12 小时节流 + 早期触发**：平衡 LLM 成本与实时性\n3. **游标式增量读取**：watermark 机制确保进度不丢失\n4. **推测兴趣生命周期**：Generate→Active→Promote/Reject→Deferred→Revived\n5. **Confusion 认知对象**：「看不懂」时暂缓处理，主题冻结防止强化困惑\n6. **Profile Overrides**：用户手动修正画像，分离存储 + 读取时合并\n7. **PostureGate**：过滤低质量信号，防止噪声污染画像\n8. **Profile Views 序列化门面**：单一门面确保 Prompt 一致性\n9. **LLM 驱动整合器**：五阶段合并管线，稳态零 LLM 成本\n10. **Event Prompt Views（compact-v1）**：确定性投影移除内部字段，节省 Token\n11. **加权洞察上下文**：五维度评分 + 四阶段填充，智能选择已有假设\n\n### 🎯 面试点拨\n\n**五层灵魂模型如何表述**：\n> 「我设计了五层灵魂模型（事件→偏好→觉察→洞察→灵魂），将原始行为数据逐层转化为深层人格画像。每层独立处理、逐层深化，支持双向修正——上层结果可以反向修正下层权重。这种管道模式的核心优势是关注点分离，每层只关心自己的职责，层间通过标准化的 ProfileSignal 传递数据。」\n\n**Confusion 机制如何表述**：\n> 「我设计了 Confusion 认知对象处理系统的'看不懂'状态。当用户行为出现矛盾时，系统不会强行推断，而是暂缓处理、等待更多证据。相关主题的权重更新被冻结（HeldUpdate），防止在困惑时进一步强化困惑。这种设计让系统区分'确定知道的'、'正在探索的'和'还不确定的'，避免过度自信的错误推断。」\n\n**Token Diet 如何表述**：\n> 「我实现了三层上下文压缩：compact-v1 投影移除 15 个对 LLM 无用的内部字段，Prompt 分层缓存让稳态下 90% 的画像 Token 被复用，加权洞察上下文选择从 441 条历史假设中智能选出 Top-40。三层叠加让 LLM Token 消耗降低 80%+。」\n\n**设计 trade-off 分析**：\n- 为什么用 12 小时节流而非实时更新？——觉察和洞察关注长期趋势，实时更新浪费 LLM 成本且引入噪声\n- 为什么 Confusion 每轮最多 2 个？——防止淹没用户的 ask 预算（≤1 次提问 / 3 天）\n- 为什么推测兴趣用关键词匹配而非 LLM？——确认判断需高频执行，LLM 成本高延迟大，bigram 匹配足够可靠"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

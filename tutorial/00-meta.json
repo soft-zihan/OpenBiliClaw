@@ -1,0 +1,34 @@
+{
+  "meta": {
+    "projectName": "OpenBiliClaw",
+    "primaryLanguage": "Python",
+    "framework": "FastAPI + Typer",
+    "description": "一个本地优先、跨平台的 AI 内容发现 Agent——通过深度心理画像理解用户，主动跨平台搜寻个性化内容推荐",
+    "granularity": "standard",
+    "generatedAt": "2026-08-12T10:00:00+08:00",
+    "projectMetrics": {
+      "totalPythonLines": 193956,
+      "pythonSourceFiles": 259,
+      "testFiles": 352,
+      "testLines": 226435,
+      "extensionTSFiles": 178,
+      "apiRoutes": 132,
+      "databaseTables": 44,
+      "soulSubmodules": 37,
+      "llmProviders": 6,
+      "sourcePlatforms": 11,
+      "discoveryStrategies": 7,
+      "moduleBreakdown": {
+        "soul": "27,674 行（画像引擎 + profile_views + event_prompt_views）",
+        "api": "26,500+ 行（API 层）",
+        "runtime": "25,247 行（运行时 + v2ex/weibo/linuxdo_producer）",
+        "storage": "21,029 行（存储层 + migration 数据迁移）",
+        "sources": "17,117 行（平台接入 + V2EX + 微博 + LinuxDo + source_bootstrap）",
+        "discovery": "15,400+ 行（发现引擎 + eval_payload/eval_reason + prefilter_audit + temporal）",
+        "llm": "11,600+ 行（LLM 集成 + evaluation_wire）",
+        "recommendation": "6,500+ 行（推荐引擎 + exclusion 即时不喜欢过滤）",
+        "eval": "6,013 行（评估体系）"
+      }
+    }
+  }
+}

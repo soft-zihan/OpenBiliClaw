@@ -1,0 +1,202 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：推荐系统如何自我评估？",
+          "anchor": "practice-eval-background",
+          "groupTitle": "Eval 评估框架",
+          "difficulty": "beginner",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "推荐系统的评估是一个经典难题——不像分类任务有明确的准确率指标，推荐质量本质上是主观的。OpenBiliClaw 的 `eval/` 模块实现了一套**自动化评估框架**，用多种维度量化推荐质量，并驱动参数自动优化。\n\n### 评估的核心挑战\n\n1. **没有「正确答案」**：推荐不像分类——没有 ground truth 可以对比\n2. **用户偏好是动态的**：今天的推荐质量好不代表明天也好\n3. **多目标平衡**：相关性、新颖度、多样性、惊喜感——这些目标互相矛盾\n\n### 解决方案：多维度评估 + 虚拟用户 + 自动优化\n\n```\n# 评估框架三大支柱\npersona   = LLM 生成虚拟用户画像（科技迷 / 文艺青年 / 泛兴趣 / 单一兴趣）\nsimulator = 为每个画像生成模拟行为（浏览 / 点赞 / 收藏）\noptimizer = 评估得分 → 定位薄弱环节 → 自动调参 → 下一轮验证\n\n# 核心价值：评估不是终点，而是优化的起点\n```"
+            }
+          ]
+        },
+        {
+          "title": "评估框架核心组件",
+          "anchor": "practice-eval-components",
+          "groupTitle": "Eval 评估框架",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "table",
+              "table": {
+                "headers": [
+                  "组件",
+                  "文件",
+                  "职责"
+                ],
+                "rows": [
+                  [
+                    "主评估器",
+                    "eval/evaluator.py",
+                    "协调评估流程，汇总各维度评分"
+                  ],
+                  [
+                    "画像生成器",
+                    "eval/persona_generator.py",
+                    "创建虚拟用户画像——模拟不同类型用户"
+                  ],
+                  [
+                    "画像判断器",
+                    "eval/persona_judge.py",
+                    "🎯 LLM-as-Judge：用 LLM 评估推荐结果与虚拟画像的匹配度"
+                  ],
+                  [
+                    "事件模拟器",
+                    "eval/event_simulator.py",
+                    "生成模拟行为数据，驱动画像构建"
+                  ],
+                  [
+                    "自动优化器",
+                    "eval/optimizer.py",
+                    "🎯 闭环核心：基于评估结果自动调整推荐参数"
+                  ],
+                  [
+                    "发现评估器",
+                    "eval/discovery_evaluator.py",
+                    "发现引擎专项评估——搜索质量、多样性"
+                  ],
+                  [
+                    "推测评估器",
+                    "eval/speculation_evaluator.py",
+                    "推测引擎专项评估——破茧成功率"
+                  ],
+                  [
+                    "人工反馈",
+                    "eval/human_feedback.py",
+                    "收集和分析人工评估反馈"
+                  ]
+                ]
+              }
+            },
+            {
+              "type": "text",
+              "text": "### 虚拟用户画像（Persona）\n\n`persona_generator.py` 使用 LLM 生成多种类型的虚拟用户画像：\n\n- **科技爱好者**：主要关注编程、硬件、AI\n- **文艺青年**：关注电影、音乐、文学\n- **泛兴趣用户**：兴趣广泛但不深入\n- **单一兴趣用户**：只关注一个领域\n\n这些虚拟画像用于测试推荐系统在不同用户类型下的表现。如果推荐系统对「科技爱好者」总是推荐科技内容（信息茧房），而对「泛兴趣用户」推荐质量很高，说明系统的跨领域推荐能力需要改进。\n\n### 🎯 LLM-as-Judge：用 LLM 评估 LLM\n\n传统评估依赖硬编码指标（点击率、留存率），但推荐质量本质是主观的。OpenBiliClaw 采用 **LLM-as-Judge** 模式——让 LLM 扮演「评委」，从用户视角判断推荐好坏：\n\n```\n# LLM-as-Judge 核心流程\nfor persona in generated_personas:\n    recommendations = recommend_engine.serve(persona)  # 给虚拟用户做推荐\n    scores = llm_judge.score(                          # LLM 多维度打分\n        persona,              # 我是谁：兴趣标签、偏好\n        recommendations,      # 推荐了什么\n        dimensions=[相关性, 新颖度, 多样性, 惊喜感]\n    )\n    # 输出：每个维度的得分 + 评估原因\n```\n\n这种模式的优势：**比硬编码指标灵活，比人工评估高效，且可复现**。\n\n### 评估指标\n\n评估框架从多个维度量化推荐质量：\n\n1. **相关性**：推荐内容是否与用户兴趣匹配？\n2. **新颖度**：推荐内容是否包含用户未曾接触的新视角？\n3. **多样性**：推荐列表是否覆盖了多个兴趣领域？\n4. **惊喜感**：推荐内容是否能让用户感到「意外之喜」？\n5. **推测成功率**：Speculator 的桥接兴趣中有多少被用户验证？"
+            }
+          ]
+        },
+        {
+          "title": "评估框架的设计价值",
+          "anchor": "practice-eval-lessons",
+          "groupTitle": "Eval 评估框架",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 6,
+          "blocks": [
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**LLM-as-Judge 是推荐评估的实用模式**——推荐质量是主观的，LLM 可以模拟人类判断，比硬编码的指标更灵活。这个模式可迁移到任何「没有标准答案」的评估场景。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**「评估-优化」闭环是推荐系统持续进步的关键**——只评估不优化等于浪费评估结果；只优化不评估等于盲目调参。评估框架的多维度评分直接驱动自动优化器调整推荐参数。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**虚拟用户测试可以发现真实用户测试难以暴露的问题**——信息茧房、多样性不足等系统性偏差只在大量测试中才会显现。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**「专项评估」比「综合评估」更有诊断价值**——发现引擎、推测引擎、推荐引擎各有不同的职责，分开评估可以精确定位问题。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**确定性评估线路**——ROW-WIRE-V1 协议确保 LLM 输入/输出格式一致、可重现，便于调试和回归测试。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**🎯 面试关联：Agent Evaluation Harness**——面试时不要只说「我做了评估」，要说「我构建了端到端的 Agent Evaluation Harness」：PersonaGenerator 创建虚拟用户 → EventSimulator 生成行为 → PersonaJudge（LLM-as-Judge）多维评估 → Optimizer 自动调参形成闭环。ROW-WIRE-V1 协议确保评测可复现。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**🎯 面试关联：自进化/反馈闭环**——评估框架不只是打分，而是驱动系统自优化。面试表述：「评估-优化闭环是 Agent 自进化的关键——多维度评分直接驱动参数调整（多样性权重、探索比例），优化后自动进入下一轮评估验证效果。」",
+                    "highlight": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "评估流程与自动优化",
+          "anchor": "practice-eval-flow",
+          "groupTitle": "Eval 评估框架",
+          "difficulty": "advanced",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "callchain",
+              "callchain": {
+                "endpoint": "完整评估流程：从虚拟用户到参数优化",
+                "steps": [
+                  {
+                    "layer": "Persona",
+                    "filePath": "eval/persona_generator.py",
+                    "functionName": "generate_personas()",
+                    "explanation": "LLM 生成多样化虚拟用户画像（兴趣标签、风格偏好、探索开放度）。",
+                    "keyPoint": "画像多样性 = 评估全面性"
+                  },
+                  {
+                    "layer": "Simulation",
+                    "filePath": "eval/event_simulator.py",
+                    "functionName": "simulate_events()",
+                    "explanation": "根据画像兴趣生成模拟行为（浏览/点赞/收藏），不同行为有不同信号强度。",
+                    "keyPoint": "收藏 > 点赞 > 浏览：信号强度影响画像更新权重"
+                  },
+                  {
+                    "layer": "Recommend",
+                    "filePath": "recommendation/engine.py",
+                    "functionName": "serve()",
+                    "explanation": "对虚拟用户运行完整推荐流程（拉取→排序→表达→策展），与真实用户共享同一套代码。",
+                    "keyPoint": "虚拟/真实用户共用推荐代码——评估结果可直接映射到真实体验"
+                  },
+                  {
+                    "layer": "Evaluate",
+                    "filePath": "eval/persona_judge.py",
+                    "functionName": "judge_recommendations()",
+                    "explanation": "🎯 LLM-as-Judge：LLM 扮演评委，从虚拟用户视角评估推荐的相关性、新颖度、多样性。",
+                    "keyPoint": "核心创新——用 LLM 评估 LLM，替代无法获取的 ground truth"
+                  },
+                  {
+                    "layer": "Optimize",
+                    "filePath": "eval/optimizer.py",
+                    "functionName": "optimize()",
+                    "explanation": "🎯 闭环核心：评估得分 → 定位薄弱维度 → 自动调整参数（探索权重、惊喜权重、桥接比例）。",
+                    "keyPoint": "评估不是终点——得分直接驱动参数调整，形成自进化闭环"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "text",
+              "text": "### 🎯 自动优化闭环\n\n评估的终极目标不是打分，而是**驱动系统自动改进**。自动优化器将评估得分转化为参数调整指令：\n\n```\n# 自动优化闭环：评估 → 诊断 → 调参 → 再评估\nwhile not converged:\n    scores = evaluate_current_config()\n\n    if scores.多样性 < threshold:\n        config.探索权重 *= 1.2        # 多样性不足 → 加大探索\n    if scores.惊喜感 < threshold:\n        config.delight_weight += 0.1  # 惊喜感不足 → 提升惊喜权重\n    if scores.推测成功率 < threshold:\n        config.bridge_ratio *= 1.1    # 破茧不够 → 增加桥接比例\n\n    apply_config(config)              # 应用新参数 → 进入下一轮评估\n```\n\n### 评估脚本\n\n| 脚本 | 用途 |\n|------|------|\n| `run_eval_round.py` | 运行一轮完整评估 |\n| `run_init_eval.py` | 评估引导初始化的画像质量 |\n| `run_discovery_eval.py` | 评估发现引擎搜索质量 |\n| `run_speculation_eval.py` | 评估推测引擎破茧成功率 |\n| `run_recommendation_auto_optimize.py` | 🎯 推荐参数自动优化 |\n| `run_discovery_auto_optimize.py` | 🎯 发现参数自动优化 |\n| `run_unified_interest_ab.py` | 统一兴趣 A/B 测试 |"
+            }
+          ]
+        },
+        {
+          "title": "确定性评估线路：Canonical Sparse Evaluation Wire",
+          "anchor": "practice-eval-wire",
+          "groupTitle": "Eval 评估框架",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "评估框架的底层传输协议由三个模块共同定义，确保 LLM 评估的输入/输出**格式一致、结果可复现**。\n\n### 三层架构\n\n```\nLayer 1: evaluation_wire.py   → 传输协议（ROW-WIRE-V1 列定义、格式校验）\nLayer 2: eval_payload.py      → 业务数据（稀疏表示、本地 ID 绑定）\nLayer 3: eval_reason.py       → 原因规范化（截断、低分过滤）\n```\n\n### 核心设计意图\n\n```\n# 为什么需要确定性评估线路？\n# 问题：同样的评估输入，如果 JSON 格式不同，LLM 输出就不可复现\n# 解决：ROW-WIRE-V1 协议强制统一格式\n\n稀疏批次 = 只传非空字段           # 节省 token，减少噪声\n本地 ID   = 请求内 ID（非全局）    # 避免 ID 泄漏到 LLM 上下文\n确定性渲染 = 相同输入 → 相同 JSON  # 评测结果可复现\n严格验证   = 格式偏差 → 直接拒绝    # 杜绝隐性不一致\n\n# 评估原因规范化：\n# 低分（< 0.5）不记录原因——节省存储，聚焦有价值的反馈\n# 非字符串 → fail closed——宁缺勿错\n# 截断到 30 码点——防止过长原因污染存储\n```\n\n**为什么确定性很重要？** 如果同样的评估输入产生不同的 JSON 格式，LLM 的输出就会不可复现。ROW-WIRE-V1 协议通过严格验证确保评测结果可复现，这对调试和回归测试至关重要。"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

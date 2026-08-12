@@ -1,0 +1,126 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：为什么 B 站和 YouTube 需要单独讲解？",
+          "anchor": "practice-bilibili-yt-background",
+          "groupTitle": "Bilibili & YouTube 平台接入",
+          "difficulty": "beginner",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "B 站和 YouTube 是 OpenBiliClaw 最早支持的两个视频平台，也是架构最成熟的两个适配器。它们代表了两种截然不同的数据接入范式：\n\n| 维度 | B 站 | YouTube |\n|------|------|---------|\n| **数据获取** | 官方 API（bilibili-api-python） | yt-dlp 元数据提取 + scrapetube |\n| **认证方式** | Cookie 认证 + QR 码登录 | 无需登录（公开数据） |\n| **反爬策略** | API 限频 + Cookie 有效期 | IP 限频 + 签名验证 |\n| **数据格式** | 结构化 JSON API | 网页元数据解析 |\n| **特殊功能** | 弹幕、投币、收藏夹 | Google Takeout 历史导入 |\n\n这种差异正是 **Adapter 模式**存在的理由——上层代码（Discovery Engine、Soul Engine）不需要关心底层实现，只需要消费统一的 Event 格式。"
+            }
+          ]
+        },
+        {
+          "title": "B 站模块：Cookie 认证与 API 封装",
+          "anchor": "practice-bilibili-deep",
+          "groupTitle": "Bilibili & YouTube 平台接入",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`bilibili/` 模块包含三个核心文件，分别负责 API 封装、认证管理和浏览器自动化。\n\n### 模块结构\n\n| 文件 | 行数 | 职责 |\n|------|------|------|\n| `bilibili/api.py` | ~2000+ | 封装 bilibili-api-python 库，提供视频信息、收藏夹、搜索等 API |\n| `bilibili/auth.py` | ~800+ | Cookie 认证管理：QR 码登录、有效性检查、自动刷新 |\n| `bilibili/browser.py` | ~500+ | Playwright 浏览器自动化，处理需要登录态的操作 |\n\n### Cookie 认证生命周期\n\nB 站的认证基于 Cookie，这是整个 B 站模块最复杂的部分：\n\n```\n用户扫码登录 → 获取 Cookie → 存入 data/bilibili_cookie.json\n                                    ↓\n每次 API 调用前 → 检查 Cookie 有效性\n                                    ↓\n              ┌── 有效 → 继续使用\n              └── 过期 → 尝试刷新 → 刷新失败 → 提示用户重新登录\n```\n\n**为什么 Cookie 管理这么复杂？** B 站的 Cookie 有有效期限制（通常 6 个月），过期后需要重新登录。但用户不可能每 6 个月手动登录一次，所以系统需要：\n1. 在 Cookie 即将过期时自动刷新\n2. 刷新失败时优雅降级（已缓存的数据仍可使用）\n3. 通过 EventHub 通知前端「B 站连接已断开」"
+            },
+            {
+              "type": "callchain",
+              "callchain": {
+                "endpoint": "B 站数据获取完整链路",
+                "steps": [
+                  {
+                    "layer": "Producer",
+                    "filePath": "runtime/bilibili_producer.py",
+                    "functionName": "produce()",
+                    "explanation": "B 站数据生产者。接收任务参数（获取浏览历史、搜索关键词、收藏夹内容），调度底层 Adapter 执行具体操作。Producer 负责将平台特定的数据格式归一化为统一的 Event 结构。",
+                    "keyPoint": "Producer 是任务调度层——它决定「做什么」，不关心「怎么做」"
+                  },
+                  {
+                    "layer": "Adapter",
+                    "filePath": "sources/bilibili_adapter.py",
+                    "functionName": "fetch_history() / search()",
+                    "explanation": "B 站适配器。封装 bilibili-api-python 库的调用，处理 Cookie 认证、请求频率控制、错误重试等平台特定逻辑。",
+                    "keyPoint": "Adapter 封装平台差异——换了平台只需要换 Adapter，上层代码不变"
+                  },
+                  {
+                    "layer": "Auth",
+                    "filePath": "bilibili/auth.py",
+                    "functionName": "BilibiliAuth.ensure_valid()",
+                    "explanation": "认证管理。每次 API 调用前自动检查 Cookie 有效性，过期时尝试刷新。认证状态持久化到 data/bilibili_cookie.json。",
+                    "keyPoint": "认证层独立于数据层——即使 Cookie 过期，数据获取层也能优雅降级"
+                  },
+                  {
+                    "layer": "API Client",
+                    "filePath": "bilibili/api.py",
+                    "functionName": "BilibiliAPI",
+                    "explanation": "底层 API 客户端。封装 bilibili-api-python 库的具体调用细节——视频信息获取、用户收藏夹读取、搜索 API 等。",
+                    "keyPoint": "API Client 是第三方库的封装层——库升级时只需修改这一层"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "YouTube 模块：yt-dlp 元数据提取与 Takeout 导入",
+          "anchor": "practice-youtube-deep",
+          "groupTitle": "Bilibili & YouTube 平台接入",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`youtube/` 模块采用了一种非常规的数据获取方式——使用 **yt-dlp**（一个视频下载工具）的元数据提取功能。\n\n### 为什么用 yt-dlp 而非 YouTube API？\n\nYouTube Data API v3 需要 API Key，且有严格的配额限制（每天 10000 单位）。而 yt-dlp 可以直接从 YouTube 网页提取视频元数据，不需要 API Key，也没有配额限制。\n\n```python\n# youtube/client.py — yt-dlp 元数据提取\nimport yt_dlp\n\nydl_opts = {\n    'quiet': True,\n    'extract_flat': True,      # 只提取元数据，不下载视频\n    'skip_download': True,\n}\n\nwith yt_dlp.YoutubeDL(ydl_opts) as ydl:\n    info = ydl.extract_info(url, download=False)\n    title = info['title']\n    duration = info['duration']\n    thumbnail = info['thumbnail']\n```\n\n### scrapetube：批量获取频道/搜索结果\n\n`scrapetube` 是一个轻量级的 YouTube 数据抓取库，用于批量获取频道视频列表和搜索结果。它内部也是基于网页解析，但提供了更方便的 API。\n\n### Google Takeout 历史导入\n\n`youtube/takeout.py` 支持导入 Google Takeout 导出的观看历史。这是用户迁移到 OpenBiliClaw 时的关键功能——用户可以从 Google 导出多年的观看历史，系统会解析这些 HTML/JSON 文件并转化为 Event 格式，直接注入 Soul Engine 生成初始画像。"
+            },
+            {
+              "type": "text",
+              "text": "### B 站 vs YouTube：设计对比\n\n| 设计维度 | B 站方案 | YouTube 方案 | 统一抽象 |\n|---------|---------|-------------|----------|\n| 数据获取 | 官方 API | yt-dlp 网页解析 | `SourceProtocol` 统一接口 |\n| 认证 | Cookie + QR 码 | 无需认证 | 认证层独立于数据层 |\n| 搜索 | API 搜索接口 | scrapetube 搜索 | `search()` 统一方法 |\n| 历史 | API 浏览历史 | Takeout 导入 | `fetch_history()` 统一方法 |\n| 错误处理 | Cookie 过期 → 刷新 | IP 限频 → 退避 | 统一的错误分类体系 |\n\n**关键设计**：无论底层实现差异多大，上层代码（Discovery Engine、Soul Engine）看到的都是统一的 `Event` 结构。这就是 Adapter 模式的价值。"
+            }
+          ]
+        },
+        {
+          "title": "平台接入的设计教训",
+          "anchor": "practice-bilibili-yt-lessons",
+          "groupTitle": "Bilibili & YouTube 平台接入",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 6,
+          "blocks": [
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**认证层必须独立于数据层**——Cookie 过期不应导致数据获取失败，而应触发优雅降级（使用已缓存数据 + 通知用户）。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**yt-dlp 不只是下载工具**——它的元数据提取功能可以替代官方 API，绕过配额限制。这是「创造性地使用现有工具」的典范。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**Google Takeout 导入是冷启动的利器**——用户多年的观看历史可以直接生成高质量初始画像，跳过漫长的画像积累期。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**统一 Event 格式是跨平台的基石**——无论底层是 API 调用、网页解析还是文件导入，最终都归一化为相同的 Event 结构。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**每个平台都有独特的「方言」**——小红书的搜索关键词风格与 B 站不同，YouTube 的视频描述格式与抖音不同。适配器需要理解这些差异。",
+                    "highlight": false
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

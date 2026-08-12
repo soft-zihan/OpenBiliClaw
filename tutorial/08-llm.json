@@ -1,0 +1,170 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：LLM 模块——AI 智能体的大脑",
+          "anchor": "practice-llm-background",
+          "groupTitle": "LLM 大模型管理",
+          "difficulty": "beginner",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`llm/` 模块是 OpenBiliClaw 的「AI 大脑」——它管理所有 LLM Provider 的接入、调用、故障降级和并发控制。在整个推荐管线中，几乎每个关键决策都由 LLM 驱动（详见「智能体设计专区」），因此 LLM 模块的可靠性直接决定了整个系统的可用性。\n\n### 支持 Provider\n\n| Provider | 文件 | 接入方式 |\n|----------|------|----------|\n| OpenAI | `openai_provider.py` | openai SDK |\n| Claude/Anthropic | `claude_provider.py` | anthropic SDK |\n| Gemini/Google | `gemini_provider.py` | google-genai SDK |\n| DeepSeek | `openai_compatible.py` | OpenAI 兼容模式 |\n| Ollama | `ollama_provider.py` | 本地模型 API |\n| OpenRouter | `openrouter_provider.py` | OpenAI 兼容模式 |\n| DashScope | `dashscope_provider.py` | 阿里云百炼 API |\n| 通用兼容 | `openai_compatible.py` | 任意 OpenAI 兼容网关 |\n\n### 核心设计原则\n\n1. **协议统一**：所有 Provider 实现 `SupportsComplete` 协议，上层代码无需关心具体 Provider\n2. **故障降级**：`default_chain` 配置多个 Provider，自动按序降级（详见「智能体设计专区」的错误分类链路）\n3. **并发控制**：`LLMConcurrencyGate` 控制全局限流，防止 API 超额\n4. **独立嵌入**：Embedding 服务完全独立于聊天 Provider，可单独配置（详见「RAG 专区」的嵌入引擎）"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    subgraph 上层消费者\n        SOUL[SoulEngine<br/>偏好/觉察/洞察]\n        DISC[DiscoveryEngine<br/>关键词/评分]\n        REC[RecommendationEngine<br/>推荐表达]\n        DIAL[DialogueAnalyzer<br/>对话理解]\n    end\n\n    subgraph LLM 服务层\n        SVC[LLMService<br/>外观模式]\n        CHAIN[complete_chain<br/>故障降级链]\n        CONC[ConcurrencyGate<br/>并发控制]\n        CACHE[PromptLayerRenderCache<br/>分层缓存]\n    end\n\n    subgraph Provider 层\n        OA[OpenAI Provider]\n        CL[Claude Provider]\n        DS[DeepSeek Provider]\n        OL[Ollama Provider]\n        DC[DashScope Provider]\n        OC[OpenAI Compatible]\n    end\n\n    SOUL --> SVC\n    DISC --> SVC\n    REC --> SVC\n    DIAL --> SVC\n    SVC --> CHAIN --> CONC\n    SVC --> CACHE\n    CHAIN --> OA\n    CHAIN --> CL\n    CHAIN --> DS\n    CHAIN --> OL\n    CHAIN --> DC\n    CHAIN --> OC",
+                "caption": "LLM 模块架构：服务层 → Provider 层"
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心流程：Provider 注册与故障降级链",
+          "anchor": "practice-llm-registry",
+          "groupTitle": "LLM 大模型管理",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "callchain",
+              "callchain": {
+                "endpoint": "LLMService.complete_chain() → LLM 调用与故障降级",
+                "steps": [
+                  {
+                    "layer": "Service",
+                    "filePath": "llm/service.py",
+                    "functionName": "complete_chain()",
+                    "explanation": "LLM 服务的外观层。接收 instance_ids 列表，按顺序尝试调用。如果当前 Provider 失败、超时或限流，自动降级到下一个。这种设计确保了即使主力 LLM 不可用，系统仍能继续工作。",
+                    "keyPoint": "故障降级链是透明的——上层代码只看到最终结果，不需要处理降级逻辑"
+                  },
+                  {
+                    "layer": "Priority",
+                    "filePath": "llm/service.py",
+                    "functionName": "_resolve_priority()",
+                    "explanation": "根据 caller 标签确定调用优先级。用户可见的推荐表达（优先级 1）优先于后台画像更新（优先级 2），确保用户不会感知到后台负载。",
+                    "keyPoint": "优先级调度是用户体验的关键——用户等待的推荐不会被后台任务抢占"
+                  },
+                  {
+                    "layer": "Registry",
+                    "filePath": "llm/registry.py",
+                    "functionName": "build_llm_registry()",
+                    "explanation": "LLM 注册表是 Provider 的工厂方法。根据配置中的 provider_type 字段动态创建对应的 Provider 实例。支持模块级覆盖——soul 模块可以用 Claude，discovery 模块可以用 DeepSeek。",
+                    "keyPoint": "注册表模式让新增 LLM Provider 的成本降到最低——只需实现协议 + 注册"
+                  },
+                  {
+                    "layer": "Provider",
+                    "filePath": "llm/openai_provider.py 等",
+                    "functionName": "complete()",
+                    "explanation": "各 Provider 的实现。每个 Provider 封装了对应 SDK 的调用细节——API Key 管理、请求格式转换、响应解析、错误处理等。所有 Provider 返回统一的 LLMResponse 结构。",
+                    "keyPoint": "Provider 层是唯一需要处理 API 差异的层——上层代码看到的都是统一的 LLMResponse"
+                  },
+                  {
+                    "layer": "Concurrency",
+                    "filePath": "llm/concurrency.py",
+                    "functionName": "LLMConcurrencyGate",
+                    "explanation": "并发控制门。使用信号量（Semaphore）限制同时进行的 LLM 调用数量。默认总并发为 4，后台任务使用 3。防止 API 超额和本地资源耗尽。",
+                    "keyPoint": "并发控制是全局的——所有 LLM 调用共享同一个信号量池"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**外观模式隔离复杂性**——上层代码只需调用 `LLMService.complete()`，不需要知道背后有几个 Provider、如何降级。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**故障降级链是生产系统必备**——任何 LLM Provider 都可能宕机/限流。6 个 Provider 组成降级链，确保服务可用性。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**JSON 容错解析非过度设计**——LLM 输出格式不稳定是已知问题，多层容错避免每次格式错误中断推荐流程。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**🎯 面试关联**——「我设计了细粒度 LLM 错误分类体系——认证失败不重试，限流退避重试，超时自动降级。6 个 Provider 组成故障降级链，确保即使主力 LLM 宕机，系统仍可继续工作。」",
+                    "highlight": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "LLM 并发控制：PrioritySemaphore 与流量分类",
+          "anchor": "practice-llm-concurrency",
+          "groupTitle": "LLM 大模型管理",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "LLM 并发控制不是简单的信号量——`llm/concurrency.py` 实现了一个**优先级感知的双层并发门控**系统，确保用户交互永远不被后台任务阻塞。\n\n### 双层架构（伪代码）\n\n```python\nclass LLMConcurrencyGate:\n    total_concurrency = 4            # 总并发上限\n    background_concurrency = 3       # 后台 = 总并发 - 1（预留 1 个给交互）\n    _total = PrioritySemaphore(4)    # 全局优先级信号量\n    _background = RefillAdmissionSemaphore(3)  # 后台准入信号量\n```\n\n**为什么后台并发 = 总并发 - 1？** 因为用户正在等待的推荐（交互流量）必须永远有至少 1 个槽位可用。\n\n**PrioritySemaphore**（优先级信号量）可以理解为「VIP 排队系统」——高优先级的请求可以插队。就像医院急诊分诊台：危重病人（INTERACTIVE）优先于普通门诊（MAINTENANCE）。\n\n**RefillAdmissionSemaphore**（补给准入信号量）可以理解为「仓库的进货闸门」——不仅控制并发数量，还感知库存状态。"
+            },
+            {
+              "type": "text",
+              "text": "### 5 级流量分类\n\n每个 LLM 调用都会被分类到 5 个流量级别之一，优先级从高到低：\n\n| 流量级别 | 优先级 | 调用方示例 | 说明 |\n|---------|--------|----------|------|\n| INTERACTIVE | 0 | `soul.dialogue`, `api.config_probe` | 用户正在等待的交互请求 |\n| REFILL_EXPRESSION | 1 | `recommendation.expression` | 推荐表达生成（用户可见） |\n| REFILL_EVALUATION | 2 | `discovery.evaluate_batch` | 内容评估（发现管线） |\n| REFILL_SUPPLY | 3 | `discovery.search.queries` | 搜索词生成（供给端） |\n| MAINTENANCE | 4 | `soul.*`, `discovery.*` | 后台维护（画像更新等） |\n\n```python\n# 流量分类伪代码\ndef classify(caller: str) -> TrafficClass:\n    if caller in INTERACTIVE_CALLERS: return INTERACTIVE      # 最高优先\n    if caller in EXPRESSION_CALLERS:  return REFILL_EXPRESSION\n    if caller in EVALUATION_CALLERS:  return REFILL_EVALUATION\n    if caller starts with SUPPLY_PREFIXES: return REFILL_SUPPLY\n    return MAINTENANCE  # 最低优先\n```\n\n**PrioritySemaphore** 使用最小堆（heapq）实现——优先级数字越小越先执行。"
+            },
+            {
+              "type": "text",
+              "text": "### 库存感知：池空时的紧急降级\n\n`RefillAdmissionSemaphore` 有一个精妙的设计——**库存感知**。当推荐池为空时，系统会动态调整流量分类：\n\n```python\n# 库存状态伪代码\nHEALTHY = 'healthy'    # 池子充足\nREFILL  = 'refill'     # 池子不足\nEMPTY   = 'empty'      # 池子为空（紧急！）\n\n# 池空时，搜索词生成从 MAINTENANCE 升级为 REFILL_SUPPLY\ndef classify(caller):\n    if caller == 'discovery.search.queries' and pool != HEALTHY:\n        return REFILL_SUPPLY  # 升级优先级！\n    return MAINTENANCE\n```\n\n**为什么需要库存感知？** 当池子为空时，搜索词生成是**唯一能补充库存**的操作。如果它被分类为 MAINTENANCE（最低优先级），会被 REFILL_EXPRESSION 阻塞——形成死锁。库存感知打破了这个循环。\n\n**饥饿保护**：MAINTENANCE 流量等待 5 分钟后强制放行，避免无限期阻塞。"
+            },
+            {
+              "type": "text",
+              "text": "### 取消安全性\n\n并发控制的经典问题——**取消安全**：当等待中的调用被取消（如用户关闭页面），信号量必须正确释放，不能泄漏槽位。\n\n```python\n# PrioritySemaphore.acquire() 伪代码\nasync def acquire(priority):\n    if in_flight < capacity and no_waiters:\n        in_flight += 1; return\n    \n    future = create_future()\n    heapq.heappush(waiters, (priority, counter, future))\n    try:\n        await asyncio.shield(future)  # 关键：shield 防止取消传播\n    except CancelledError:\n        # 清理等待队列，确保信号量不泄漏\n        remove_future_from_waiters(future)\n        if future.done(): release()  # 已获得槽位但被取消 → 释放\n        raise\n```\n\n**`asyncio.shield()`** 的作用：即使外部协程被取消，`future` 本身不会被取消。确保槽位分配/释放是原子性的。"
+            }
+          ]
+        },
+        {
+          "title": "Prompt 管理：15 个专用 Prompt 与容错 JSON 解析",
+          "anchor": "practice-llm-prompt",
+          "groupTitle": "LLM 大模型管理",
+          "difficulty": "advanced",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### Prompt 管理\n\n`llm/prompts.py`（2800+ 行）定义了 15 个专用 Prompt 构建函数。每个函数针对一个特定的 LLM 任务精心设计，包括系统提示、用户提示、温度参数和 JSON Schema 约束。\n\n> 关于 15 个 Prompt 的详细设计哲学和温度选择，请参见「智能体设计专区」的 Prompt 工程体系章节。\n\n### Prompt 分层缓存\n\n`llm/prompt_cache.py` 实现了 Prompt 层的渲染缓存。当用户画像没有变化时，相同的 Prompt 层不需要重新渲染，直接使用缓存结果。这减少了 LLM 调用的 token 消耗和延迟。\n\n> 关于分层缓存的实现细节，请参见「智能体设计专区」的 Prompt 分层缓存章节。\n\n### JSON 容错解析\n\n`llm/json_utils.py` 提供了 LLM 输出的 JSON 解析工具。由于 LLM 的输出格式不稳定（有时会多出逗号、引号、或额外的文本），这个模块实现了多层容错解析：\n\n```\n尝试 1: 标准 json.loads() 解析\n    ↓ 失败\n尝试 2: 正则提取 JSON 块（去除前后文本）\n    ↓ 失败\n尝试 3: 修复常见格式错误（尾逗号、缺少引号）\n    ↓ 失败\n尝试 4: 返回 None，由调用方决定如何处理\n```"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# llm/json_utils.py — LLM 输出容错 JSON 解析（伪代码）\n\ndef parse_llm_json(raw: str) -> dict | None:\n    # 尝试 1: 标准 json.loads()\n    if try_parse(raw): return result\n    \n    # 尝试 2: 正则提取 JSON 块（去除前后解释文本）\n    match = regex_extract_json(raw)\n    if match and try_parse(match): return result\n    \n    # 尝试 3: 修复常见格式错误（尾逗号、单引号）\n    cleaned = fix_trailing_commas(raw)\n    if try_parse(cleaned): return result\n    \n    return None  # 最终放弃，由调用方处理",
+                "caption": "llm/json_utils.py — 多层容错 JSON 解析伪代码"
+              }
+            },
+            {
+              "type": "text",
+              "text": "### Compact-v1 输入视图：认知 Prompt 的 Token 优化\n\nv0.3.200 在 `llm/prompts.py` 中为三个认知 Prompt（偏好分析/觉察/洞察）新增了 `input_view` 参数，支持 `legacy` 和 `compact-v1` 两种视图模式：\n\n```python\n# 偏好分析 Prompt 伪代码\ndef build_preference_analysis_prompt(events, profile, input_view=\"legacy\"):\n    if input_view == \"compact-v1\":\n        profile_view = build_cognition_profile_view_v1(...)  # 裁剪画像投影\n        event_view = build_cognition_event_view_v1(events)    # 裁剪事件投影\n    else:\n        # 原有完整序列化（向后兼容）\n```\n\n**compact-v1 的三层优化**：\n1. **事件投影**：移除 15 个内部字段（`browser_context`、`dom_snapshot` 等）\n2. **画像投影**：拆分为缓存稳定的 soul/preference + 易变上下文\n3. **重复消除**：去除 `soul.interest` 和 `preferences` 的重复数据\n\n**向后兼容**：`input_view=\"legacy\"` 保持原有行为。"
+            }
+          ]
+        },
+        {
+          "title": "Evaluation Wire：确定性评估传输协议",
+          "anchor": "practice-llm-eval-wire",
+          "groupTitle": "LLM 大模型管理",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`llm/evaluation_wire.py` 定义了 LLM 批量评估的**确定性行级传输协议**。它确保评估输入/输出的格式一致性、可重现性和跨传输兼容性。\n\n### ROW-WIRE-V1 协议\n\n```python\nROW_WIRE_V1_HEADER = \"ROW-WIRE-V1\"\nROW_WIRE_V1_COLUMNS = (\n    \"id\", \"source_platform\", \"content_type\", \"mode\",\n    \"title\", \"author\", \"body_text\", \"description\",\n    \"duration\", \"view_count\", \"like_count\", ...\n)\n```\n\n### 关键设计\n\n1. **版本化协议**：新字段需要新版本号，而不是静默改变现有行的宽度或含义\n2. **严格验证**：`validate_canonical_evaluation_envelope()` 严格验证格式\n3. **确定性渲染**：相同输入产生相同 JSON，确保缓存和调试的一致性\n4. **稀疏表示**：只发送非空字段，减少 token 消耗\n\n### 与 eval_payload 的关系\n\n- `evaluation_wire.py`：底层传输协议（列定义、验证）\n- `eval_payload.py`：上层业务逻辑（批量构建、本地 ID 管理）"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

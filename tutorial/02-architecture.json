@@ -1,0 +1,154 @@
+{
+  "chapters": [
+    {
+      "id": "architecture",
+      "title": "架构设计",
+      "sections": [
+        {
+          "title": "背景知识：整体架构：数据流与模块关系",
+          "anchor": "architecture-overview",
+          "difficulty": "beginner",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "OpenBiliClaw 的架构设计遵循**管道-过滤器（Pipeline-Filter）**模式——想象一条自来水净化流水线：原水从一端进入，依次经过沉淀池、过滤池、活性炭吸附池、消毒池，每一道关卡去除不同类型的杂质，最终流出干净的饮用水。软件中的管道-过滤器模式也是同样的思路：数据从外部平台流入，经过多个独立处理阶段（每个阶段就像一个「过滤器」，只关心自己负责的加工步骤），最终转化为个性化推荐。这种模式的好处是每一层可以独立开发、测试和替换，互不干扰。整个系统可以拆分为四大子系统：\n\n1. **数据采集层**（Runtime Producers + Sources）——从 8 个平台抓取用户行为数据\n2. **理解层**（Soul Engine + Memory）——将行为数据转化为心理画像（35 个子模块）\n3. **发现层**（Discovery Engine）——根据画像主动搜寻内容（7 种策略）\n4. **推荐层**（Recommendation Engine）——对发现的内容进行 5 维评分和表达\n\n### 系统规模\n\n| 子系统 | 代码量 | 核心组件 |\n|--------|--------|----------|\n| 数据采集层 | 10,745 行 | 8 个平台适配器、7 种发现策略、source_bootstrap 引导入队 |\n| 理解层 | 26,345 行 | 36 个灵魂子模块、5 层画像管道、profile_views 序列化门面 |\n| 发现层 | 14,532 行 | 候选池、5 层漏斗过滤、eval_payload/eval_reason 评估线路 |\n| 推荐层 | 6,300 行 | 5 维评分、ToneProfile 语气控制 |\n| API 层 | 25,428 行 | 132 个路由、认证、降级 |\n| 存储层 | 16,552 行 | 44 张表、异步 I/O |\n| LLM 集成 | 11,129 行 | 6 个 Provider、5 级流量分类、evaluation_wire 确定性传输 |\n| 运行时 | 21,663 行 | 6 个后台循环、事件总线、source_incremental_sync 增量同步 |"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart LR\n    subgraph 外部平台 [8 个平台]\n        B站\n        小红书\n        抖音\n        YouTube\n        X\n        知乎\n        Reddit\n        Bangumi\n    end\n\n    subgraph 数据采集层 [9,791 行]\n        RT[runtime/ producers<br/>6 个后台循环]\n        SRC[sources/ adapters<br/>8 个平台]\n    end\n\n    subgraph 理解层 [25,186 行]\n        SOUL[soul/ SoulEngine<br/>35 个子模块]\n        MEM[memory/ MemoryManager<br/>17 种事件类型]\n        PROFILE[soul/ SoulProfile<br/>5 层画像]\n    end\n\n    subgraph 发现层 [13,961 行]\n        DISC[discovery/ DiscoveryEngine<br/>7 种策略]\n        POOL[discovery/ CandidatePool<br/>5 层漏斗]\n    end\n\n    subgraph 推荐层 [6,300 行]\n        REC[recommendation/ Engine<br/>5 维评分]\n        CURATOR[recommendation/ Curator<br/>ToneProfile]\n    end\n\n    subgraph 对外接口 [25,428 行]\n        API[api/ FastAPI<br/>132 个路由]\n        WEB[web/ UI]\n        EXT[extension/<br/>178 TS 文件]\n    end\n\n    外部平台 --> SRC\n    SRC --> RT\n    RT --> SOUL\n    SOUL --> MEM\n    MEM --> PROFILE\n    PROFILE --> DISC\n    DISC --> POOL\n    POOL --> REC\n    REC --> CURATOR\n    CURATOR --> API\n    API --> WEB\n    API --> EXT",
+                "caption": "OpenBiliClaw 整体架构：数据流与模块关系（量化版）"
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心设计模式",
+          "anchor": "architecture-patterns",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 1. 策略模式（Strategy Pattern）——多平台数据源适配\n\n策略模式的核心思想是：把一个任务的「怎么做」封装成独立的策略类，让调用方可以像换衣服一样切换实现方式，而不需要修改调用代码本身。就像你用手机支付时，可以选择微信支付、支付宝或银行卡——支付方式不同，但「付款」这个动作的接口是一样的。\n\n`sources/` 目录下每个平台有独立的 Adapter（如 `bilibili_adapter.py`、`xiaohongshu_adapter.py`），它们都实现统一的 `protocol.py` 中定义的接口（Protocol 是 Python 的「协议」机制，定义了一组方法签名，任何实现了这些方法的类都自动被视为符合该协议，不需要显式继承）。`registry.py` 负责注册和发现所有已配置的 8 个平台 Adapter。\n\n**为什么这样设计？** 每个平台的数据获取方式差异巨大：B站有官方 API，小红书需要浏览器自动化，YouTube 使用 yt-dlp。策略模式让每个平台封装自己的实现细节，上层代码（Runtime Producers）只需调用统一接口。"
+            },
+            {
+              "type": "text",
+              "text": "### 2. 管道模式（Pipeline Pattern）——五层灵魂画像\n\n管道模式就像工厂的流水线：原材料从第一道工序进入，每道工序完成自己的加工后传递给下一道，最终产出成品。每道工序可以独立升级或替换，不影响其他工序。\n\n`soul/pipeline.py` 定义了 `ProfileUpdatePipeline`，将行为事件依次经过五个处理层（Onion Layer）：\n\n- **事件层（Event）**：17 种事件类型入库（view/like/favorite/comment 等）\n- **偏好层（Preference）**：提取兴趣标签和风格偏好（200 事件/批）\n- **觉察层（Awareness）**：观察行为模式与趋势（900 事件上限）\n- **洞察层（Insight）**：形成假设与推论（450 笔记上限）\n- **灵魂层（Soul）**：整合为完整的人格画像\n\n每一层都是独立的处理器，可以单独升级或替换。这种设计让系统能够逐步深化对用户的理解，而非一次性产出。"
+            },
+            {
+              "type": "text",
+              "text": "### 3. 工厂模式（Factory Pattern）——LLM Provider 注册\n\n工厂模式的核心思想是：不让你直接 `new` 一个对象，而是告诉工厂「我要什么」，由工厂决定创建哪个具体实例。就像去餐厅点菜——你说「来一份宫保鸡丁」，不需要知道厨师怎么切配炒，厨房（工厂）会帮你搞定。\n\n`llm/registry.py` 中的 `build_llm_registry()` 是 LLM Provider 的工厂方法。它根据配置中的 `provider_type` 字段动态创建对应的 Provider 实例，支持 6 个 Provider：\n\n- OpenAI（GPT-4o/GPT-4o-mini）\n- Anthropic（Claude 3.5 Sonnet/Opus）\n- Google（Gemini 1.5 Pro/Flash）\n- Ollama（本地模型）\n- DashScope（通义千问）\n- OpenRouter（多模型路由）\n\n新增 LLM Provider 只需要：\n1. 在 `llm/` 下创建 `xxx_provider.py`\n2. 实现 `SupportsComplete` 协议\n3. 在 `registry.py` 的 `provider_specs` 中注册"
+            },
+            {
+              "type": "text",
+              "text": "### 4. 观察者模式（Observer Pattern）——Runtime 事件总线\n\n观察者模式又叫「发布-订阅」模式，就像你关注了一个微信公众号：公众号发布新文章时，所有关注者都会自动收到推送，不需要你反复刷新页面。在软件中，一个对象（发布者）状态变化时，所有依赖它的对象（订阅者）都会自动收到通知。\n\n`runtime/events.py` 中的 `RuntimeEventHub` 实现了发布-订阅机制。后台任务（如推荐生成、画像更新）通过 `publish()` 推送事件，浏览器插件和 Web UI 通过 WebSocket（一种允许服务器主动推送消息给浏览器的网络协议，不同于传统的「浏览器请求→服务器响应」模式）订阅这些事件，实现实时状态更新。内部使用 `asyncio.Queue`（asyncio 是 Python 的异步编程框架，Queue 是其中的队列数据结构，就像一个排队通道——先来的请求先被处理，后来的排队等待）作为轻量级消息通道，而非重量级消息队列服务。\n\n**为什么这样设计？** 后台任务和前端 UI 是解耦的——前端不需要轮询后端状态，而是被动接收推送。这避免了不必要的网络开销，也让 UI 响应更及时。"
+            },
+            {
+              "type": "text",
+              "text": "### 5. 责任链模式（Chain of Responsibility）——LLM 故障降级\n\n责任链模式就像你打客服电话：先由一线客服处理，如果解决不了就转给二线专家，再不行就转给技术主管——请求沿着一条链依次传递，直到有人能处理为止。\n\n`llm/service.py` 的 `complete_chain()` 方法实现了 LLM 调用的故障降级链。当 `default_chain` 中配置了多个 LLM 实例时，系统会从左到右依次尝试：如果第一个 Provider 失败、超时或限流，自动降级到下一个。\n\n这确保了推荐系统的鲁棒性——即使主力 LLM 服务不可用，系统仍能通过备用 Provider 继续工作。"
+            },
+            {
+              "type": "text",
+              "text": "### 6. 信号量模式（Semaphore Pattern）——LLM 并发控制\n\n信号量（Semaphore）是计算机科学中的经典概念，可以理解为「停车场的空位指示器」：停车场有 4 个车位（并发上限），每进入一辆车信号量减 1，离开一辆车信号量加 1；当信号量为 0 时，后来的车必须在入口等待。在软件中，信号量用于控制同时访问某个资源的任务数量，防止资源被过度使用。\n\n`llm/concurrency.py` 实现了双层信号量架构：\n\n- **PrioritySemaphore**（优先级信号量）：在普通信号量的基础上增加了优先级支持。使用最小堆（heapq，一种优先队列数据结构，每次取出元素时自动返回优先级最高的那个）实现，支持 5 级流量优先级（INTERACTIVE/REFILL_EXPRESSION/REFILL_EVALUATION/REFILL_SUPPLY/MAINTENANCE）\n- **RefillAdmissionSemaphore**（补给准入信号量）：库存感知，防止后台任务耗尽 LLM 配额\n\n**关键参数**：\n- 背景 LLM 并发 = 总并发 - 1（预留交互式请求）\n- 饥饿保护：MAINTENANCE 任务等待 5 分钟后强制放行\n- 取消安全：使用 `asyncio.shield()`（asyncio 是 Python 的异步编程框架，shield 的作用是保护一个操作不被中途取消——就像电梯门已经关闭后不会因为外面有人喊就重新开门）防止任务取消导致信号量泄漏"
+            }
+          ]
+        },
+        {
+          "title": "模块依赖关系图",
+          "anchor": "architecture-dependencies",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "graph TD\n    config[config.py<br/>配置管理] --> storage[storage/database.py<br/>44 张表]\n    config --> llm[llm/<br/>6 个 Provider]\n    \n    storage --> memory[memory/manager.py<br/>17 种事件类型]\n    storage --> soul[soul/engine.py<br/>35 个子模块]\n    storage --> discovery[discovery/engine.py<br/>7 种策略]\n    storage --> recommendation[recommendation/engine.py<br/>5 维评分]\n    \n    llm --> soul\n    llm --> discovery\n    llm --> recommendation\n    llm --> runtime[runtime/<br/>6 个后台循环]\n    \n    memory --> soul\n    \n    sources[sources/<br/>8 个平台] --> runtime\n    bilibili[bilibili/<br/>B站接入] --> sources\n    youtube[youtube/<br/>YouTube接入] --> sources\n    \n    soul --> discovery\n    discovery --> recommendation\n    \n    runtime --> api[api/app.py<br/>132 个路由]\n    recommendation --> api\n    \n    api --> web[web/<br/>Web UI]\n    api --> saved_sync[saved_sync/<br/>收藏同步]\n    \n    eval[eval/<br/>6,013 行] --> discovery\n    eval --> recommendation\n    \n    agent[agent/<br/>Agent编排] --> soul\n    agent --> discovery\n    agent --> recommendation",
+                "caption": "模块依赖关系图（量化版）"
+              }
+            }
+          ]
+        },
+        {
+          "title": "数据库设计概览",
+          "anchor": "architecture-database",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "OpenBiliClaw 使用 **SQLite** 作为唯一数据库，文件默认存储在 `data/openbiliclaw.db`。选择 SQLite 的原因：\n\n1. **零配置**——不需要安装数据库服务，开箱即用\n2. **本地优先**——数据完全在用户设备上，符合隐私设计理念\n3. **单文件**——备份和迁移只需复制一个文件\n4. **足够强大**——SQLite 完全能支撑个人级应用的并发需求\n\n### 数据库规模\n\n- **44 张表**：覆盖事件、内容、画像、推荐、反馈等所有业务领域\n- **异步 I/O**：使用 `aiosqlite`（让 SQLite 支持异步操作的 Python 库）+ `ThreadPoolExecutor`（线程池执行器——把耗时的同步数据库操作放到独立线程中运行，不阻塞主事件循环），避免阻塞事件循环\n- **WAL 模式**（Write-Ahead Logging，预写日志）：SQLite 默认模式下读写互相阻塞，WAL 模式让写入先追加到独立日志文件，读取仍读原始数据，两者互不干扰——就像餐厅的「堂食」和「外带」各走各的通道。这显著提升了并发读写性能\n- **向量缓存**：`embedding_cache.db` 独立存储 384 维向量嵌入（Embedding，即把文本转换为一组浮点数向量，语义相近的文本在向量空间中距离也近，是语义检索的基础）"
+            },
+            {
+              "type": "text",
+              "text": "### 核心表结构\n\n`storage/database.py`（16,552 行）定义了完整的数据库 schema。主要表包括：\n\n- **events**：用户行为事件日志（17 种类型），是系统的核心数据源\n- **content_cache**：跨平台内容缓存，存储标题、封面、描述等元数据\n- **saved_items**：用户收藏的内容，支持跨平台同步\n- **recommendation_history**：推荐历史记录，用于去重和疲劳控制\n- **profile_snapshots**：画像快照，记录每次画像更新的版本\n- **feedback_log**：用户反馈记录（喜欢/不感兴趣/多来点等）\n- **dialogue_turns**：对话历史，用于聊天调教\n- **candidate_pool**：候选内容池，发现引擎的中间结果\n- **discovery_axes**：发现轴（兴趣方向），用于主动探索\n- **runtime_state**：运行时状态存储（初始化进度、任务状态等）\n\n### 关键性能参数\n\n| 参数 | 值 | 说明 |\n|------|-----|------|\n| `_LOCK_RETRY_ATTEMPTS` | 8 | 数据库锁重试次数 |\n| `_LOCK_RETRY_SLEEP_SECONDS` | 0.02 | 重试间隔 20ms |\n| `_INTERACTIVE_DB_BUSY_TIMEOUT_MS` | 250 | 交互式请求超时 250ms |\n| `_MAINTENANCE_DB_BUSY_TIMEOUT_MS` | 75 | 维护任务超时 75ms |\n| `_POOL_MAINTENANCE_BATCH_SIZE` | 50 | 候选池维护批次大小 |\n| `_RETENTION_DAYS` | 7 | 事件保留 7 天 |\n| `_RETENTION_WEEKS` | 4 | 推荐历史保留 4 周 |"
+            }
+          ]
+        },
+        {
+          "title": "Agent Orchestrator 编排层",
+          "anchor": "architecture-agent-orchestrator",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`agent/` 模块是 OpenBiliClaw 的**顶层协调器**。它不包含业务逻辑——不处理画像更新、不做推荐排序、不抓取平台数据。它的职责是**编排**：管理 Agent 的生命周期、注册可插拔的技能、协调各引擎协同工作。\n\n### 编排器与各引擎的关系\n\n```\nAgent Orchestrator（编排器）\n    ├── SoulEngine        — 理解用户（画像更新）\n    ├── DiscoveryEngine   — 发现内容（搜索抓取）\n    ├── RecommendationEngine — 推荐内容（排序表达）\n    ├── MemoryManager     — 管理记忆（事件入库）\n    └── Skills[]          — 可插拔技能\n```\n\nAgent Orchestrator 就像乐队的指挥——不演奏任何乐器，但确保所有乐手在正确的时间演奏正确的音符。\n\n### 生命周期管理\n\nAgent 的生命周期分为三个阶段：\n\n```\ninitialize() → 各引擎按依赖顺序启动\n    ↓\nrun() → 后台任务开始循环执行（内容抓取、画像更新、推荐生成）\n    ↓\nshutdown() → 优雅关闭：保存状态、关闭连接、清理资源\n```\n\n**启动顺序很重要**：MemoryManager 必须先于 SoulEngine 初始化（因为 SoulEngine 需要 MemoryManager 提供事件数据）；SoulEngine 必须先于 DiscoveryEngine（因为发现引擎需要画像来生成搜索策略）。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# agent/orchestrator.py — Agent 编排器（~120 行）伪代码\n\nclass AgentOrchestrator:\n    def __init__(self, config):\n        self.config = config\n        self._skills = {}           # 可插拔技能注册表\n        self._soul = None           # 理解引擎\n        self._discovery = None      # 发现引擎\n        self._recommendation = None # 推荐引擎\n        self._memory = None         # 记忆管理\n\n    async def initialize(self):\n        # 按依赖拓扑排序启动：Memory → Soul → Discovery → Recommendation\n        self._memory = await MemoryManager.create(self.config)\n        self._soul = await SoulEngine.create(self.config, self._memory)\n        self._discovery = await DiscoveryEngine.create(self.config, self._soul)\n        self._recommendation = await RecommendationEngine.create(self.config)\n        self._load_builtin_skills()\n\n    def register_skill(self, skill: Skill):\n        self._skills[skill.name] = skill\n\n    async def run_discovery_cycle(self):\n        # 1. 读取画像 → 2. 生成发现策略 → 3. 执行搜索\n        # 4. 评估排序 → 5. 生成推荐\n        profile = self._soul.get_profile()\n        strategies = self._discovery.generate_strategies(profile)\n        contents = await self._discovery.execute(strategies)\n        ranked = self._recommendation.rank(contents, profile)\n        return ranked",
+                "caption": "agent/orchestrator.py — 编排器伪代码：生命周期管理 + 技能注册 + 发现循环"
+              }
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    subgraph Agent Orchestrator\n        ORCH[AgentOrchestrator<br/>生命周期管理<br/>依赖注入]\n    end\n\n    subgraph 核心引擎\n        SOUL[SoulEngine<br/>画像理解]\n        DISC[DiscoveryEngine<br/>内容发现]\n        REC[RecommendationEngine<br/>推荐排序]\n        MEM[MemoryManager<br/>记忆管理]\n    end\n\n    subgraph 技能系统\n        SKILL1[browse<br/>内容浏览]\n        SKILL2[comment_analysis<br/>评论分析]\n        SKILL3[search<br/>跨平台搜索]\n        SKILL_N[自定义技能...]\n    end\n\n    subgraph 外部接口\n        API[FastAPI REST/WS]\n        EXT[浏览器插件]\n        CLI[CLI 命令]\n    end\n\n    ORCH --> SOUL\n    ORCH --> DISC\n    ORCH --> REC\n    ORCH --> MEM\n    ORCH --> SKILL1\n    ORCH --> SKILL2\n    ORCH --> SKILL3\n    ORCH --> SKILL_N\n    API --> ORCH\n    EXT --> API\n    CLI --> API",
+                "caption": "Agent 架构：编排器 + 核心引擎 + 技能系统"
+              }
+            }
+          ]
+        },
+        {
+          "title": "技能系统与设计教训",
+          "anchor": "architecture-agent-skills-lessons",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`skills/` 目录定义了 Agent 的可插拔技能。每个技能是一个独立的目录，包含 `SKILL.md` 描述文件和实现代码。\n\n### 内置技能\n\n| 技能 | 能力 |\n|------|------|\n| **浏览** | 浏览内容列表，支持分页和过滤 |\n| **评论分析** | 分析内容评论，提取用户情感倾向 |\n| **搜索** | 跨平台搜索内容 |\n| **OpenBiliClaw 适配** | 与后端交互的适配层 |\n\n### 技能接口\n\n```python\nclass Skill(Protocol):\n    name: str\n    description: str\n    async def execute(self, context: dict) -> SkillResult: ...\n```\n\n### 设计教训\n\n1. **编排器不包含业务逻辑**——它的职责是协调，不是执行\n2. **启动顺序是依赖关系的体现**——MemoryManager → SoulEngine → DiscoveryEngine → RecommendationEngine\n3. **技能系统是开闭原则的实践**——对扩展开放（新增技能），对修改关闭（不改核心代码）\n4. **Agent Orchestrator 只有 ~120 行**——好的架构让顶层代码极其简洁"
+            },
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**🎯 面试关联：Agent 生命周期管理**——initialize → run → shutdown 三阶段是 Agent Runtime Harness 的核心体现。「我设计的 Agent Runtime 统一管理任务状态、执行预算、节点重试和持久化 Checkpoint。启动顺序是依赖拓扑排序，关闭顺序是逆序释放。」",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**🎯 面试关联：多 Agent 协作**——Orchestrator 协调各引擎的模式本质是「指挥官模式」。「我设计了基于任务分派和验证门禁的多 Agent 协作机制。各引擎通过标准化的 ProfileSignal 和 MemoryLayer 交换数据，松耦合但协调一致。」",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**🎯 面试关联：Agent Loop**——CognitionCycle 的有界循环 + watermark 持久化 + 单次重试，对应 Plan-Tool-Observe-Final 模式。「我基于有界 Agent Loop 构建了认知循环——通过 watermark 游标和事件上限确保循环必然终止。」",
+                    "highlight": true
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

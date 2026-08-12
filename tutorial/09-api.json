@@ -1,0 +1,225 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：FastAPI 后端——所有客户端的统一入口",
+          "anchor": "practice-api-background",
+          "groupTitle": "API 后端服务",
+          "difficulty": "beginner",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`api/app.py` 是整个项目的 HTTP 入口，也是最大的单文件（16800+ 行）。它基于 FastAPI 框架（一个高性能的 Python Web 框架，自动处理请求解析、参数验证、API 文档生成等），提供了 REST API（基于 HTTP 的标准接口，浏览器通过 URL 访问来获取/提交数据）+ WebSocket（一种允许服务器主动推送消息给浏览器的网络协议，不同于传统的「浏览器请求→服务器响应」模式）的双通道服务。\n\n### 服务的客户端\n\n| 客户端 | 连接方式 | 主要用途 |\n|--------|---------|----------|\n| **浏览器插件** | HTTP API | 同步 Cookie、上报行为事件、获取推荐 |\n| **桌面端 Web** (`/web`) | HTTP + WebSocket | 大屏推荐首页、画像看板 |\n| **移动端 Web** (`/m`) | HTTP + WebSocket | 手机适配的推荐界面 |\n| **CLI 工具** | HTTP API | 执行管理操作 |\n\n### 为什么 `app.py` 有 16800+ 行？\n\n这是一个已知的技术债务。`app.py` 包含了所有 API 端点的路由定义、请求处理、业务逻辑，甚至部分数据访问逻辑。项目早期快速迭代时，拆分的优先级低于功能开发。理想状态应该按业务域拆分为 `api/routes/events.py`、`api/routes/recommendations.py` 等独立模块。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# api/app.py — FastAPI 应用工厂（19000+ 行）\n\nfrom fastapi import FastAPI, WebSocket, WebSocketDisconnect\nfrom fastapi.middleware.cors import CORSMiddleware\nfrom fastapi.responses import JSONResponse\n\n# 导入 140+ 个 Pydantic 模型用于请求/响应类型安全\n# Pydantic 是一个数据验证库——你定义数据的「形状」（字段名、类型、约束），\n# 它自动检查传入的数据是否符合要求，不符合就报错，防止脏数据进入系统\nfrom openbiliclaw.api.models import (\n    HealthResponse, ConfigResponse, RecommendationOut,\n    FeedbackIn, ChatIn, SavedItemIn, ...\n)\n\ndef create_app(\n    *,\n    database=None,\n    soul_engine=None,\n    dialogue=None,\n    runtime_controller=None,\n    recommendation_engine=None,\n    runtime_event_hub=None,\n    account_sync_service=None,\n    auto_update_service=None,\n) -> FastAPI:\n    \"\"\"创建本地后端 API 应用。\n    \n    所有组件通过参数注入——不直接导入全局单例，\n    这使得测试时可以替换为 mock，也支持配置热重载\n    时重建组件。\n    \"\"\"\n    app = FastAPI(title=\"OpenBiliClaw API\", default_response_class=JSONResponse)\n\n    # GZip 中间件：只压缩 ≥ 500 字节的响应\n    app.add_middleware(GZipMiddleware, minimum_size=500)\n    app.add_middleware(CORSMiddleware, allow_origins=[\"*\"], ...)\n\n    # ── 构建 RuntimeContext ──\n    config = load_config()\n    ctx = build_runtime_context(config, database, soul_engine, ...)\n    \n    # ... 注册所有路由端点 ...\n    return app",
+                "caption": "api/app.py — create_app 应用工厂：依赖注入 + 中间件配置",
+                "lineHighlights": [
+                  10,
+                  22,
+                  28,
+                  33
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心 API 端点设计",
+          "anchor": "practice-api-endpoints",
+          "groupTitle": "API 后端服务",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 端点分类\n\n`app.py` 定义了约 40+ 个端点，按业务域可分为以下几类："
+            },
+            {
+              "type": "table",
+              "table": {
+                "headers": [
+                  "业务域",
+                  "端点",
+                  "方法",
+                  "职责"
+                ],
+                "rows": [
+                  [
+                    "行为上报",
+                    "/api/events/ingest",
+                    "POST",
+                    "接收浏览器插件上报的行为事件"
+                  ],
+                  [
+                    "推荐",
+                    "/api/recommendations/feed",
+                    "GET",
+                    "获取个性化推荐列表"
+                  ],
+                  [
+                    "推荐",
+                    "/api/delight/pending-batch",
+                    "GET",
+                    "获取待处理的惊喜推荐"
+                  ],
+                  [
+                    "画像",
+                    "/api/profile",
+                    "GET",
+                    "获取用户灵魂画像"
+                  ],
+                  [
+                    "画像",
+                    "/api/profile/interests",
+                    "GET",
+                    "获取兴趣标签列表"
+                  ],
+                  [
+                    "对话",
+                    "/api/chat",
+                    "POST",
+                    "发送对话消息，获取 AI 回复"
+                  ],
+                  [
+                    "反馈",
+                    "/api/feedback",
+                    "POST",
+                    "提交推荐反馈（喜欢/不喜欢）"
+                  ],
+                  [
+                    "配置",
+                    "/api/config",
+                    "GET/POST",
+                    "读取/更新配置（事务性更新）"
+                  ],
+                  [
+                    "配置",
+                    "/api/config/probe",
+                    "POST",
+                    "探测配置项的有效性"
+                  ],
+                  [
+                    "初始化",
+                    "/api/init/status",
+                    "GET",
+                    "获取引导初始化状态"
+                  ],
+                  [
+                    "初始化",
+                    "/api/init/start",
+                    "POST",
+                    "启动引导初始化"
+                  ],
+                  [
+                    "收藏",
+                    "/api/saved/list",
+                    "GET",
+                    "获取收藏列表"
+                  ],
+                  [
+                    "收藏",
+                    "/api/saved/sync",
+                    "POST",
+                    "触发收藏同步"
+                  ],
+                  [
+                    "收藏",
+                    "/api/saved/native",
+                    "POST",
+                    "浏览器插件一键收藏"
+                  ],
+                  [
+                    "实时",
+                    "/api/ws/runtime",
+                    "WebSocket",
+                    "运行时事件流订阅"
+                  ],
+                  [
+                    "活动",
+                    "/api/activity-feed",
+                    "GET",
+                    "获取后台活动动态"
+                  ],
+                  [
+                    "图片",
+                    "/api/image-proxy",
+                    "GET",
+                    "图片代理（解决跨域）"
+                  ],
+                  [
+                    "LLM",
+                    "/api/llm/instances",
+                    "GET",
+                    "获取可用 LLM 实例列表"
+                  ]
+                ]
+              }
+            },
+            {
+              "type": "text",
+              "text": "### 安全设计\n\n- **密码门禁**：支持可选的密码登录（scrypt 哈希），本机请求默认免登录\n- **CORS 控制**：CORS（Cross-Origin Resource Sharing，跨域资源共享）是浏览器的安全机制——默认情况下，网页只能访问同源（同协议、同域名、同端口）的 API。CORS 配置告诉浏览器「允许哪些来源访问我的 API」。仅允许配置的 Origin 访问\n- **扩展设备访问**：支持扩展设备密钥认证，与主密码分离\n- **Session 管理**：JWT 风格的登录态，支持过期时间配置\n\n### 降级模式\n\n当 LLM 服务不可用时，API 会自动进入**降级模式**：\n\n- 推荐端点返回已缓存的推荐（而非报错）\n- 对话端点返回友好提示（「AI 助手暂时不可用」）\n- 画像端点正常工作（画像数据不依赖 LLM）\n- 配置端点正常工作\n\n这种设计确保了即使 LLM 服务完全不可用，用户仍然可以浏览已缓存的推荐、查看画像、修改配置。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# api/app.py — 典型端点：行为事件上报\n\n@app.post(\"/api/events/ingest\", response_model=EventIngestResponse)\nasync def ingest_event(request: Request, body: BehaviorEventBatchIn):\n    \"\"\"接收浏览器插件上报的行为事件批次。\n    \n    这是系统的数据入口——用户在 B 站/YouTube/小红书上的\n    每一次播放、点赞、收藏都会通过这个端点流入系统，\n    最终被 Soul Engine 消费为画像信号。\n    \"\"\"\n    ctx = _get_runtime_context(request)\n    \n    # 事件去重：基于 request_id 防止网络重试导致的重复入库\n    receipt = await ctx.event_ingress.ingest_batch(\n        events=body.events,\n        source_platform=body.source_platform,\n        request_id=body.request_id,\n    )\n    \n    return EventIngestResponse(\n        accepted=receipt.accepted,\n        rejected=receipt.rejected,\n        duplicates=receipt.duplicates,\n    )",
+                "caption": "api/app.py — 行为事件上报端点：数据入口的去重与入库",
+                "lineHighlights": [
+                  2,
+                  9,
+                  15
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "WebSocket 实时通信与双栈监听",
+          "anchor": "practice-api-websocket",
+          "groupTitle": "API 后端服务",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`/api/ws/runtime` WebSocket 端点是连接后台任务和前端 UI 的实时通道。\n\n### 事件类型\n\n| 事件类型 | 触发时机 | 前端响应 |\n|---------|---------|----------|\n| `init_progress` | 引导初始化阶段变化 | 更新进度条 |\n| `recommendation_ready` | 新推荐生成完成 | 刷新推荐列表 |\n| `profile_updated` | 用户画像变化 | 刷新画像看板 |\n| `task_status` | 后台任务状态变化 | 更新任务状态指示器 |\n| `error` | LLM 调用失败、平台连接异常 | 显示错误提示 |\n\n### 双栈监听\n\n`runtime/api_server.py` 实现了 IPv4/IPv6 双栈监听。当 `host = \"0.0.0.0\"` 时，系统会创建独立的 IPv4 和 IPv6 socket，设置 `IPV6_V6ONLY` 确保双栈兼容。\n\n```python\n# runtime/api_server.py — 双栈监听\nasync def start_server(host, port):\n    # IPv4 socket\n    ipv4_server = await loop.create_server(\n        factory, host=\"0.0.0.0\", port=port\n    )\n    # IPv6 socket（如果系统支持）\n    ipv6_server = await loop.create_server(\n        factory, host=\"::\", port=port,\n        reuse_address=True,\n    )\n    # 设置 IPV6_V6ONLY 避免与 IPv4 冲突\n    ipv6_server.sockets[0].setsockopt(\n        IPPROTO_IPV6, IPV6_V6ONLY, 1\n    )\n```"
+            },
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**REST + WebSocket 双通道是实时应用的标配**——REST 处理请求-响应，WebSocket 处理服务端推送。两者互补，不可互相替代。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**降级模式是 API 设计的高级课题**——不是所有端点在 LLM 故障时都不可用。区分「依赖 LLM」和「不依赖 LLM」的端点，让后者继续服务。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**16800+ 行的单文件是技术债务**——早期快速迭代的代价。重构路径：先提取中间件 → 再拆分路由 → 最后提取 Service 层。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**图片代理解决了跨域问题**——浏览器插件无法直接加载 B 站/小红书的封面图，通过 `/api/image-proxy` 代理可以绕过 CORS 限制。",
+                    "highlight": false
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

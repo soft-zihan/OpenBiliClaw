@@ -1,0 +1,130 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：为什么选择 SQLite 而非传统数据库？",
+          "anchor": "practice-storage-background",
+          "groupTitle": "Storage 数据库层",
+          "difficulty": "beginner",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`storage/database.py`（15700+ 行）是整个项目最大的单文件，承载了所有数据持久化职责。选择 SQLite 而非 PostgreSQL/MySQL 是 OpenBiliClaw「本地优先」设计哲学的直接体现。\n\n### 为什么选择 SQLite？\n\n1. **零配置**：面向个人用户的桌面应用，要求用户安装数据库服务是不现实的\n2. **数据主权**：所有数据在一个 SQLite 文件中，用户完全掌控——备份只需复制文件，迁移只需拷贝目录\n3. **性能足够**：个人级推荐系统的数据量（几万到几十万条事件）完全在 SQLite 的能力范围内\n4. **嵌入式**：SQLite 是进程内数据库，没有网络开销，没有连接池管理的复杂性\n\n### 代价与取舍\n\n- **单写入者限制**：SQLite 同一时刻只允许一个写入者。但 OpenBiliClaw 是单用户系统，通过 WAL 模式 + ThreadPoolExecutor 序列化写入即可\n- **无主从复制**：不支持分布式部署——但本地应用本就不需要\n- **无 ORM**：直接使用原生 SQL，代码量大但透明可控，没有 ORM 的「黑魔法」开销。ORM（Object-Relational Mapping，对象关系映射）是一种让你用 Python 对象操作数据库的技术——虽然写起来方便，但隐藏了底层 SQL 的复杂性，调试时很难排查问题"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    subgraph 数据文件\n        DB[openbiliclaw.db<br/>主数据库<br/>WAL模式]\n        EMB[embedding_cache.db<br/>嵌入向量缓存<br/>独立隔离]\n        MEM[data/memory/*.json<br/>多层记忆文件<br/>JSON状态]\n    end\n\n    subgraph 访问层\n        POOL[ThreadPoolExecutor<br/>异步包装同步SQLite]\n        AIO[aiosqlite<br/>异步连接]\n    end\n\n    subgraph 业务模块\n        SOUL[SoulEngine]\n        DISC[DiscoveryEngine]\n        REC[RecommendationEngine]\n        API[FastAPI API]\n        MEM_MGR[MemoryManager]\n    end\n\n    SOUL --> POOL --> DB\n    DISC --> POOL --> DB\n    REC --> POOL --> DB\n    API --> AIO --> DB\n    MEM_MGR --> MEM\n    POOL --> EMB",
+                "caption": "数据库架构：三文件分离设计"
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心表结构与数据模型",
+          "anchor": "practice-storage-tables",
+          "groupTitle": "Storage 数据库层",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`database.py` 定义了完整的数据库 Schema。由于文件长达 15700+ 行，这里按业务域梳理核心表：\n\n### 核心表分类\n\n| 业务域 | 表名 | 职责 | 关键设计 |\n|--------|------|------|----------|\n| **行为采集** | `events` | 用户行为事件日志 | 去重键 `ingest_key`，防止重复入库 |\n| **行为采集** | `content_cache` | 跨平台内容缓存 | 标题、封面、描述等元数据 |\n| **用户画像** | `profile_snapshots` | 画像快照 | 版本化管理，支持回溯 |\n| **用户画像** | `feedback_log` | 用户反馈记录 | 喜欢/不喜欢/多来点等 |\n| **用户画像** | `dialogue_turns` | 对话历史 | 聊天调教的原始数据 |\n| **发现引擎** | `candidate_pool` | 候选内容池 | 评分排序，非FIFO队列 |\n| **发现引擎** | `discovery_axes` | 发现轴 | 兴趣探索方向记录 |\n| **推荐系统** | `recommendation_history` | 推荐历史 | 去重和疲劳控制的基础 |\n| **LLM** | `llm_usage` | LLM 调用用量 | Token 消耗追踪 |\n| **运行时** | `runtime_state` | 运行时状态 | 初始化进度、任务状态 |\n| **收藏** | `saved_items` | 跨平台收藏 | 统一身份标识，跨平台去重 |"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# storage/database.py — EventInsertResult：事件去重设计\n\n@dataclass(frozen=True)\nclass EventInsertResult:\n    \"\"\"事件插入结果——每次写入都会检查去重。\"\"\"\n    event_id: int\n    event_type: str        # view/like/favorite/search/...\n    ingest_key: str        # 去重键：由平台+内容ID+事件类型生成\n    inserted: bool         # 是否真正插入了新行\n\n    @property\n    def duplicate(self) -> bool:\n        \"\"\"如果已有相同 ingest_key 的行存在，则为重复。\"\"\"\n        return not self.inserted\n\n# 去重键的设计：同一用户对同一内容的同一操作只记录一次\n# 例如：bilibili:view:BV1xx4x1y7z 作为唯一键",
+                "caption": "storage/database.py — 事件去重机制",
+                "lineHighlights": [
+                  3,
+                  8,
+                  12
+                ]
+              }
+            },
+            {
+              "type": "text",
+              "text": "### JSON 列设计\n\n复杂数据结构（如画像、配置、发现轴参数）使用 TEXT 列存储 JSON 字符串。Python 层通过 `json.dumps()` / `json.loads()` 进行序列化/反序列化。\n\n**为什么不用关系型表结构？** 画像的结构会随着五层模型的演进而变化——今天新增一个 `exploration_openness` 字段，明天可能再加一个 `cognitive_style` 字段。JSON 列让 Schema 变更不需要执行 `ALTER TABLE`，代价是牺牲了数据库层面的查询能力。但对于画像这种「整体读取、整体更新」的数据，这个取舍是合理的。"
+            }
+          ]
+        },
+        {
+          "title": "嵌入缓存隔离与数据库迁移",
+          "anchor": "practice-storage-embedding-db",
+          "groupTitle": "Storage 数据库层",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 为什么嵌入缓存使用独立数据库？\n\n向量嵌入存储在 `data/embedding_cache.db` 中，而非主数据库。这个设计决策有三个原因：\n\n1. **性能隔离**：嵌入操作（高频写入）不影响主数据库的读写性能\n2. **可重建**：嵌入缓存是纯缓存——删除后重新计算即可，不影响业务数据\n3. **独立备份策略**：主数据库需要完整备份，嵌入缓存可以跳过（节省空间）\n\n### 数据库迁移策略\n\n`database.py` 使用**增量迁移**模式。每次启动时检查当前 Schema 版本，按序执行缺失的迁移：\n\n```\nv1 → v2: 新增 events 表的 ingest_key 列\nv2 → v3: 新增 candidate_pool 表\nv3 → v4: 新增 llm_usage 表\n...\n```\n\n迁移是幂等的——重复执行不会出错。这确保了从任意旧版本升级到最新版都能正常工作。"
+            },
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**SQLite 是本地应用的正确选择**——零配置、数据主权、性能足够。不要为了「看起来专业」而引入 PostgreSQL。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**WAL 模式是 SQLite 并发读写的标配**——读写不互斥，写入性能提升，崩溃恢复安全。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**缓存数据应该与业务数据分离**——嵌入缓存可以重建，不应与不可重建的用户数据混在一起。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**JSON 列适合「整体读写」的半结构化数据**——画像、配置等不需要在数据库层面做字段查询的数据。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**事件去重是数据管道的基石**——`ingest_key` 确保同一行为不会被重复记录，避免画像更新被重复触发。",
+                    "highlight": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "异步访问模式：ThreadPoolExecutor 桥接同步与异步",
+          "anchor": "practice-storage-async",
+          "groupTitle": "Storage 数据库层",
+          "difficulty": "advanced",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "SQLite 的 Python 标准库 `sqlite3` 是同步阻塞的，但 FastAPI 是异步框架。如果直接在 asyncio 事件循环中执行 SQLite 操作，会阻塞整个事件循环，导致所有并发请求排队。这里需要理解一个核心概念：同步操作就像你亲自去银行办业务，排队等候时什么也不能做；异步操作就像网上转账，提交后你可以继续做其他事，银行在后台处理。\n\n### 解决方案：双通道异步桥接\n\n项目使用了两种异步访问模式：\n\n1. **`ThreadPoolExecutor`**（线程池执行器）：可以理解为「跑腿团队」——你有一堆任务要做，但有些任务很耗时（比如数据库查询），你就雇了一个跑腿团队，把耗时任务交给他们去做，你继续处理其他事情，他们做完了再把结果送回来。大部分数据库操作通过 `loop.run_in_executor()` 放到独立线程池执行，不阻塞事件循环\n2. **`aiosqlite`**：一个让 SQLite 支持异步操作的 Python 库，底层原理与 ThreadPoolExecutor 类似（也是把同步操作放到线程中），只是提供了更 Pythonic 的 async/await 语法。部分轻量级读取操作使用 aiosqlite 实现真正的异步 I/O\n\n```python\n# 核心模式：异步包装同步 SQLite 操作\nasync def db_operation():\n    loop = asyncio.get_running_loop()\n    return await loop.run_in_executor(\n        thread_pool,        # 共享线程池\n        sync_sqlite_func,   # 同步 SQLite 函数\n        *args\n    )\n```\n\n### 为什么不用纯 aiosqlite？\n\n`aiosqlite` 底层仍然是将同步操作放到线程中执行，本质上与手动使用 `ThreadPoolExecutor` 相同。但 `database.py` 中有大量复杂的查询逻辑（15700+ 行），使用 `ThreadPoolExecutor` 可以直接复用现有的同步代码，不需要重写为异步版本。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# storage/database.py — WAL 模式与并发控制\n\ndef _configure_connection(conn: sqlite3.Connection) -> None:\n    \"\"\"配置每个连接的 PRAGMA。\"\"\"\n    conn.execute(\"PRAGMA journal_mode=WAL\")       # Write-Ahead Logging\n    conn.execute(\"PRAGMA synchronous=NORMAL\")      # 平衡性能与安全\n    conn.execute(\"PRAGMA busy_timeout=5000\")       # 写入冲突时等待 5 秒\n    conn.execute(\"PRAGMA cache_size=-8000\")        # 8MB 页缓存\n    conn.execute(\"PRAGMA temp_store=MEMORY\")       # 临时表放内存\n\n# WAL 模式的核心优势：\n# - 读写不互斥：读操作不会被写操作阻塞\n# - 写入性能提升：WAL 是追加写入，不需要重写整个数据页\n# - 崩溃恢复：WAL 文件可以安全地回滚未完成的事务",
+                "caption": "storage/database.py — WAL 模式配置",
+                "lineHighlights": [
+                  6,
+                  7,
+                  8,
+                  9,
+                  10
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

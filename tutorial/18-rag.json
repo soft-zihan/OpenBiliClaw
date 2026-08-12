@@ -1,0 +1,197 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：RAG 在 OpenBiliClaw 中的定位",
+          "anchor": "practice-rag-overview",
+          "groupTitle": "RAG 检索增强生成",
+          "difficulty": "beginner",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "OpenBiliClaw 虽然没有传统意义上的「知识库问答」RAG（RAG = Retrieval-Augmented Generation，检索增强生成——一种让 LLM 在回答问题前先检索相关文档，再基于检索结果生成回答的技术范式），但它在整个推荐管线中大量使用了 **RAG 的核心技术——向量嵌入 + 语义检索 + LLM 增强**。这套体系分布在多个模块中，形成了一套完整的「检索增强推荐」架构。\n\n### 项目中 RAG 技术的四大应用场景\n\n| 场景 | 嵌入对象 | 检索方式 | LLM 增强 | 所在模块 |\n|------|---------|---------|---------|--------|\n| **候选池清理** | 不喜欢的话题文本 | 余弦召回 (0.55) | LLM 精判 pur/keep | `soul/pool_purge.py` |\n| **兴趣标签去重** | 兴趣标签名称 | 余弦聚类 (0.85) | LLM 合并判断 | `soul/consolidator.py` |\n| **视觉偏好匹配** | 封面图像向量 | 余弦聚类 → 质心 | 不作为 RAG 但影响评分 | `recommendation/visual_profile.py` |\n| **话题疲劳控制** | 内容标题+话题 | 余弦相似度 | 不作为 RAG 但用于去重 | `discovery/engine.py` |\n| **分类语义路由** | 类别名称 | 最近邻 (0.55) | 无（纯嵌入路由） | `soul/taxonomy.py` |\n| **搜索策略过滤** | 兴趣/领域文本 | 缓存余弦查找 | 无（用于策略决策） | `discovery/strategies/` |\n\n这些场景共同构成了一个**多层次的语义理解层**，让系统不只是靠关键词匹配，而是靠语义相似度来理解内容之间的关系。\n\n> **关键概念解释**：\n> - **余弦相似度**（Cosine Similarity）：衡量两段文本语义相近程度的指标，值域 0~1。想象两个箭头从原点出发——箭头方向越接近，余弦值越接近 1，表示语义越相似。比如「机器学习」和「深度学习」的余弦相似度很高（~0.85），而「机器学习」和「烹饪食谱」的余弦相似度很低（~0.1）。\n> - **质心**（Centroid）：一组向量的「中心点」——把所有向量加起来取平均。就像一群朋友的「平均口味」：有人喜欢辣、有人喜欢甜，质心就是所有人的综合偏好。在视觉偏好建模中，用户喜欢的所有封面图向量取平均，就得到用户的「视觉审美质心」。\n> - **LRU**（Least Recently Used，最近最少使用）：一种缓存淘汰策略——当缓存满了，优先丢弃最久没有被访问过的数据。就像书架空间有限，新书来了时，先把最久没翻过的旧书移走。"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    subgraph 嵌入引擎\n        EMB[EmbeddingService<br/>文本嵌入 + 图像嵌入]\n        L1[L1 内存缓存<br/>LRU OrderedDict]\n        L2[L2 SQLite 持久化<br/>embedding_cache.db]\n    end\n\n    subgraph 检索场景\n        PURGE[候选池清理<br/>Recall → LLM Precision]\n        CONSOL[画像去重<br/>聚类 → LLM Judge]\n        VISUAL[视觉偏好<br/>封面聚类 → 质心匹配]\n        FATIGUE[话题疲劳<br/>语义去重]\n        TAXON[分类路由<br/>NN 语义路由]\n    end\n\n    subgraph LLM增强\n        LLM_PURGE[LLM 精判<br/>keep/purge 决策]\n        LLM_MERGE[LLM 合并判断<br/>merge/keep 操作]\n    end\n\n    EMB --> L1 --> L2\n    L2 --> PURGE\n    L2 --> CONSOL\n    L2 --> VISUAL\n    L2 --> FATIGUE\n    L2 --> TAXON\n    PURGE --> LLM_PURGE\n    CONSOL --> LLM_MERGE",
+                "caption": "RAG 技术体系：嵌入引擎 → 多场景检索 → LLM 增强"
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心场景四：分类路由与话题疲劳",
+          "anchor": "practice-rag-taxonomy",
+          "groupTitle": "RAG 检索增强生成",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 分类语义路由\n\n`soul/taxonomy.py` 使用嵌入向量将任意类别名称路由到封闭的 19 类词汇表：\n\n```pseudo\n# 语义路由：将野生类别名映射到标准分类\nCATEGORY_VOCAB = (\"娱乐\", \"生活\", \"科技\", ... , \"其他\")  // 19 个标准分类\n\nfunction resolve_category(raw_name):\n    // 1. 精确匹配 → 直接返回\n    if raw_name in CATEGORY_VOCAB: return raw_name\n    // 2. 嵌入最近邻 → 返回最佳匹配\n    vec = embed(raw_name)\n    best = argmax_cosine(vec, CATEGORY_VOCAB)   // 阈值 < 0.55 → 返回\"其他\"\n    return best if similarity >= 0.55 else \"其他\"\n```\n\n这本质上是**语义路由**——用嵌入相似度来决定一个「野生」类别名称应该归入哪个标准分类。\n\n### 话题疲劳控制\n\n`discovery/engine.py` 使用嵌入向量实现话题级别的去重和疲劳控制：\n\n- `_normalize_topic_keys()`：将语义相似的话题归一到同一个 key，避免「同一话题的不同表述」被当作不同话题\n- `_normalize_topic_groups()`：将相似的话题组归并，减少候选池中的重复\n- 搜索策略中使用 `cached_embedding_lookup()` 进行缓存嵌入查找，在不触发 API 调用的前提下判断内容相关性"
+            }
+          ]
+        },
+        {
+          "title": "RAG 体系设计总结",
+          "anchor": "practice-rag-lessons",
+          "groupTitle": "RAG 检索增强生成",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**两级缓存是 RAG 系统的标配**。L1 内存 + L2 持久化的架构让嵌入查询在热路径上几乎零延迟，同时确保重启后缓存不丢失。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**Recall → LLM Precision 是 RAG 的黄金模式**。低阈值嵌入召回保证高召回率，LLM 精判保证高准确率。两个阶段各司其职，不可互相替代。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**阈值不是魔法数字，而是数据驱动的校准结果**。视觉聚类的 0.50 阈值来自 452 张真实封面的分布统计，不是拍脑袋决定的。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**嵌入来源追踪（provenance）是缓存安全的基础**。切换嵌入模型后，旧缓存必须自动失效，否则不同维度的向量混用会导致灾难性结果。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**多模态 RAG 打开了新的匹配维度**。封面图像嵌入让系统能够理解用户的视觉审美偏好，这是纯文本嵌入无法做到的。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**降级策略是 RAG 系统的必备设计**。当 LLM 不可用时，系统应退回到更高阈值的纯嵌入模式，而非直接失败。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**跳过记忆（No-merge memory）让稳态运行零 LLM 调用**。已判断过的标签对不再重复询问，这是成本控制的关键设计。",
+                    "highlight": false
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "嵌入引擎：两级缓存架构",
+          "anchor": "practice-rag-embedding",
+          "groupTitle": "RAG 检索增强生成",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`llm/embedding.py`（731 行）是整个 RAG 体系的基石。它实现了一套**两级缓存**的嵌入服务，确保语义检索既快又省。\n\n### 两级缓存设计\n\n```\n请求 → L1 内存缓存 (LRU, 命中率最高)\n          ↓ miss\n       L2 SQLite 持久化缓存 (命中率高)\n          ↓ miss\n       调用 Embedding API (最慢、最贵)\n          ↓\n       写入 L2 → 写入 L1\n```\n\n**L1 内存缓存**：使用 `OrderedDict`（Python 标准库中的有序字典——它记住键值对的插入顺序，配合 `move_to_end()` 方法可以高效实现 LRU 淘汰：每次访问一个条目就把它移到末尾，缓存满了就删除最前面的条目）实现 LRU 淘汰，存储最热门的嵌入向量。对于频繁访问的兴趣标签、类别名称，L1 命中率极高。\n\n**L2 SQLite 持久化缓存**：独立于主数据库的 `embedding_cache.db`，以 SHA-256 哈希为键（SHA-256 是一种密码学哈希函数，把任意长度的文本转换为固定的 64 位十六进制字符串，就像给每段文本生成一个独一无二的「指纹」——即使原文只改一个字符，指纹也完全不同）。即使进程重启，已计算的嵌入向量也不会丢失。\n\n### 为什么需要两级缓存？\n\n1. **成本控制**：Embedding API 调用虽然比 Chat API 便宜，但在高频场景下（每次推荐轮次可能涉及数十次嵌入查询），累积成本不可忽视。\n2. **延迟优化**：本地缓存查找是微秒级，API 调用是百毫秒级。两级缓存让热路径几乎零延迟。\n3. **跨进程持久化**：L2 SQLite 确保重启后不需要重新计算所有嵌入。"
+            },
+            {
+              "type": "text",
+              "text": "### 多模态嵌入支持\n\nEmbedding Service 同时支持文本嵌入和图像嵌入：\n\n```pseudo\n// 嵌入服务协议：文本 + 图像双通道\ninterface EmbeddingService:\n    embed(text) → vector          // 文本嵌入\n    embed_image(bytes, mime) → vector  // 图像嵌入\n    image_embedding_active() → bool    // 多模态是否启用\n```\n\n图像嵌入用于封面视觉匹配。当 `[llm.embedding].multimodal_enabled` 开启且配置了支持多模态的模型（如阿里云 DashScope qwen3-vl-embedding）时，系统会：\n\n1. 下载候选内容的封面图\n2. 计算封面图像向量\n3. 与用户的视觉偏好质心进行余弦匹配\n4. 将匹配结果作为 delight_score 的微小加成（最大 0.05）\n\n### 嵌入来源追踪\n\n每次嵌入计算都会记录 `provenance`（来源证明），包含 provider、endpoint、model、dimension 四个维度。这确保了：\n- 切换嵌入模型后，旧缓存自动失效（provenance 不匹配）\n- 不同模型的嵌入向量不会混用（维度可能不同）\n- 调试时可以追溯每个向量的来源"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "pseudo",
+                "content": "// 嵌入来源追踪：确保缓存安全性\n\n// 核心思想：用 provider+endpoint+model+dimension 构建确定性指纹\n// 切换模型后指纹变化 → 旧缓存自动失效 → 防止不同维度向量混用\n\nfunction build_provenance(provider, endpoint, model, dimension):\n    payload = {\n        \"provider\":  normalize(provider),          // 去空格、转小写\n        \"endpoint\":  normalize_endpoint(endpoint), // 去掉 query/fragment/apikey\n        \"model\":     strip(model),\n        \"dimension\": max(0, int(dimension)),\n    }\n    return json.dumps(payload, sort_keys=True)  // 确定性序列化\n\nfunction normalize_endpoint(url):\n    // 故意丢弃 query string 和 fragment（可能含 API 密钥）\n    // 移除 userinfo（用户名密码）\n    return scheme + host + path   // 只保留稳定部分",
+                "caption": "嵌入来源追踪——用确定性指纹保证缓存安全",
+                "lineHighlights": [
+                  4,
+                  14,
+                  15,
+                  16
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心场景一：候选池清理（Recall → LLM Precision）",
+          "anchor": "practice-rag-purge",
+          "groupTitle": "RAG 检索增强生成",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`soul/pool_purge.py` 实现了最经典的 RAG 模式——**两阶段检索增强**。当用户表达了新的「不喜欢」（如「不喜欢营销文」），系统需要从候选池中清理相关的内容。\n\n### 两阶段流水线\n\n```\n用户不喜欢\"营销文\"\n        ↓\n  Stage 1: 硬匹配（字符串精确匹配 topic_key / topic_group）\n        ↓ 高置信度，直接删除\n  Stage 2: 嵌入召回 + LLM 精判\n        ↓\n  a) 嵌入召回：用低阈值(0.55)广撒网\n        ↓ 返回所有语义相似度 > 0.55 的候选\n  b) LLM 精判：对召回集逐条判断 keep/purge\n        ↓\n  最终决定：删除或保留\n```\n\n### 为什么用低阈值 0.55？\n\n代码注释给出了明确的理由：\n\n> \"Deliberately low to maximize recall. False positives are filtered out by the LLM precision pass.\"\n\n这是 RAG 的经典模式——**召回阶段追求高召回率**（宁可多召回一些不相关的），**精判阶段追求高准确率**（由 LLM 来做最终判断）。\n\n如果嵌入阈值设得太高（如 0.78），可能会漏掉很多语义相关但用词不同的内容。比如用户不喜欢「营销文」，但候选池中可能有一条标题是「5分钟教你月入过万」，它们用词完全不同但语义高度相关。低阈值确保这些内容被召回，然后由 LLM 来判断是否真的属于「营销文」。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "pseudo",
+                "content": "// ★ 两阶段 RAG 核心：Recall → LLM Precision\n\nRECALL_THRESHOLD = 0.55    // 故意低阈值 → 最大化召回率\nSTANDALONE_THRESHOLD = 0.78 // 无 LLM 时的保守策略\n\n// Stage 2a: 嵌入召回——低阈值广撒网\nfunction embedding_recall(candidates, disliked_topics):\n    topic_vectors = [embed(topic) for topic in disliked_topics]\n    \n    results = []\n    for cand in candidates:\n        cand_vec = embed(cand.title + cand.topic)  // 候选文本 = 标题+话题\n        for topic, topic_vec in topic_vectors:\n            sim = cosine_similarity(cand_vec, topic_vec)\n            if sim >= 0.55:           // 低阈值：宁可错杀，不可放过\n                results.append((cand, sim, topic))\n                break                 // 只需最佳匹配\n    return results\n\n// Stage 2b: LLM 精判——对召回集逐条 keep/purge\n// → 由 LLM 做最终判断，弥补低阈值带来的误报",
+                "caption": "两阶段 RAG 核心：低阈值召回 + LLM 精判",
+                "lineHighlights": [
+                  3,
+                  4,
+                  14,
+                  15,
+                  16
+                ]
+              }
+            },
+            {
+              "type": "text",
+              "text": "### 降级策略\n\n当 LLM 不可用时（如初始化阶段），系统退回到纯嵌入模式：\n\n```pseudo\nSTANDALONE_THRESHOLD = 0.78  // 无 LLM 精判 → 提高阈值减少误判\n// 降级逻辑：阈值从 0.55 → 0.78，用更高门槛弥补缺少精判\n```\n\n没有 LLM 做精判时，阈值从 0.55 提升到 0.78，用更高的准入门槛来弥补缺少精判的不足。这是一个优雅的降级设计——系统在能力不足时变得更保守，而非更激进。"
+            }
+          ]
+        },
+        {
+          "title": "核心场景二：画像去重（聚类 → LLM Judge）",
+          "anchor": "practice-rag-consolidation",
+          "groupTitle": "RAG 检索增强生成",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`soul/consolidator.py`（1467 行）实现了另一个 RAG 模式——**嵌入聚类 + LLM 判断**。用户的兴趣标签会随着时间积累大量措辞变体（如「机器学习」「Machine Learning」「ML」「深度学习」），这些变体在语义上相同但字符串不同，会挤占 LLM Prompt 的 64 个标签槽位。\n\n### 五阶段去重流水线\n\n```\n原始兴趣标签（可能有 1000+ 个）\n        ↓\n  Stage 1: 规则层 —— 同分类下完全相同的名称直接合并（无 LLM）\n        ↓\n  Stage 2: 嵌入聚类 —— 余弦相似度 > 0.85 的标签归为一组\n        ↓\n  Stage 3: 跳过记忆 —— 之前已判断为\"不同\"的标签对不再重复询问\n        ↓\n  Stage 4: LLM 判断 —— 批量（32 簇/次）判断每簇是否应合并\n        ↓\n  Stage 5: 确定性应用 —— 代码验证 LLM 输出后执行合并操作\n```\n\n### 关键设计决策\n\n1. **聚类阈值 0.85**：远高于候选池清理的 0.55。因为这里的目标是找「几乎相同」的标签，而非「语义相关」的标签。\n\n2. **跳过记忆（No-merge memory）**：如果 LLM 之前已判断「机器学习」和「深度学习」是不同的，系统会记住这个判断，不再重复询问。这确保了稳态运行时**零 LLM 调用**——只有新出现的标签对才会触发判断。\n\n3. **批量判断**：32 个聚类一次 LLM 调用，而非每个聚类单独调用。这大幅减少了 LLM 调用次数。\n\n4. **反泛化守卫**：禁止 LLM 将标签合并为过于宽泛的「伞形词」（如「低质」「营销」「游戏」），防止将具体的偏好变成无意义的笼统标签。代码中使用 `frozenset`（Python 的不可变集合——一旦创建就不能修改，查找速度极快）存储黑名单，确保判断效率。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "pseudo",
+                "content": "// ★ 画像去重核心参数与反泛化守卫\n\n// 反泛化黑名单：禁止合并为过于宽泛的\"伞形词\"\nBANNED_CANONICALS = frozenset({\n    \"低质\", \"营销\", \"标题党\", \"广告\", \"无聊\", \"套路\",\n    \"水分\", \"游戏\", \"视频\", \"内容\",\n})\n\n// 五阶段流水线的关键阈值\nSIMILARITY_THRESHOLD = 0.85     // 聚类阈值：只合并\"几乎相同\"的标签\nNO_MERGE_CAP       = 16000      // 跳过记忆上限\nJUDGE_BATCH_SIZE   = 32         // 每次 LLM 调用处理 32 个聚类\nMIN_INTERVAL       = 12 * 3600  // 最小运行间隔 12 小时\n\n// 流水线伪代码：\n// 1. 规则层合并（同分类+同名 → 直接合并，零 LLM 调用）\n// 2. 嵌入聚类（cosine > 0.85 → 归为一簇）\n// 3. 跳过记忆（已判断\"不同\"的标签对 → 跳过）\n// 4. LLM 批量判断（32 簇/次 → merge or keep）\n// 5. 验证并执行合并",
+                "caption": "画像去重——五阶段流水线与关键参数",
+                "lineHighlights": [
+                  4,
+                  10,
+                  11,
+                  12,
+                  13
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心场景三：视觉偏好建模（多模态嵌入聚类）",
+          "anchor": "practice-rag-visual",
+          "groupTitle": "RAG 检索增强生成",
+          "difficulty": "advanced",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`recommendation/visual_profile.py` 实现了独特的**多模态 RAG**——使用图像嵌入来建模用户的视觉审美偏好。\n\n### 核心思路\n\n用户对推荐内容的反馈（喜欢/不喜欢）不仅包含对内容主题的偏好，还包含对**封面视觉风格**的偏好。比如：\n\n- 喜欢「暗黑游戏截图」风格的用户，可能对类似风格的封面有天然好感\n- 喜欢「明亮美食特写」的用户，可能对暗色调封面不太感兴趣\n\n### 多峰聚类\n\n```\n用户喜欢的封面 → 嵌入向量 → 贪婪聚类 → 每簇质心\n用户不喜欢的封面 → 嵌入向量 → 贪婪聚类 → 每簇质心\n\n新候选封面 → 嵌入向量 → 与所有质心计算余弦 → 取最大相似度\n```\n\n**为什么用多峰而非单质心？** 代码注释给出了精彩解释：\n\n> \"A user's taste is multi-peaked — they may like both 'dark game screenshots' and 'bright food close-ups', which a single mean would average into an incoherent grey.\"\n\n用户的审美是多峰的——如果只用一个平均质心，「暗黑游戏」和「明亮美食」会被平均成「不伦不类的灰色」，失去区分能力。保留多个峰的质心，让候选封面匹配任意一个峰即可。"
+            },
+            {
+              "type": "text",
+              "text": "### 聚类阈值校准\n\n代码中包含详细的校准记录：\n\n```pseudo\n// 数据驱动阈值校准（452 张真实 B 站封面，101,926 对比较）\n// 分布统计：p50=0.219  p75=0.295  p90=0.365  p95=0.409  p99=0.497\n//\n// 原始阈值 0.80 → 远超 p99，没有任何封面能合并\n// 最终阈值 0.50 → 刚好在 p99 之上，只有真正相似的才合并\nCLUSTER_THRESHOLD = 0.50\n```\n\n这体现了**数据驱动的阈值校准**——不是凭感觉设定阈值，而是基于真实数据分布来设定。\n\n### 封面加成在推荐中的应用\n\n在 `recommendation/engine.py` 中，封面视觉匹配被用作 delight_score 的微小加成（最大 0.05）：\n\n```pseudo\n// 封面视觉加成参数（可选、单向、加性）\nVISUAL_BONUS_MAX  = 0.05   // 硬上限：最多加 0.05\nVISUAL_SIM_FLOOR  = 0.35   // 低于 p50 → 不加分\nVISUAL_SIM_CEIL   = 0.48   // 达到 p95 → 满分\n```\n\n这个加成是**可选的、单向的、加性的**——不会因为封面不匹配而扣分，只在匹配时给予微小加成。这样设计确保了视觉偏好不会主导推荐排序，只是在同分内容中做出优雅的区分。"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

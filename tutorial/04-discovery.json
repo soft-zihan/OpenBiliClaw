@@ -1,0 +1,296 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：发现引擎的职责与设计哲学",
+          "anchor": "practice-discovery-background",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "beginner",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Discovery Engine 是 OpenBiliClaw 的「主动搜索引擎」——它不被动等待平台推送，而是根据 Soul Engine 产出的用户画像，**主动去各平台搜索**可能感兴趣的内容。\n\n### 与传统推荐的本质区别\n\n- **传统推荐**：被动等待平台推送内容，系统从已有内容池中匹配\n- **Discovery Engine**：主动生成搜索策略，跨平台寻找内容，把「发现」作为一个主动过程\n\n### 核心设计问题：五层漏斗\n\n发现引擎面对的根本挑战是：**如何在海量平台内容中精准找到用户真正感兴趣的？** 答案是五层递进漏斗：\n\n1. **关键词召回**（LLM 生成搜索词）→ 找到几百条候选\n2. **Embedding 预过滤**（向量相似度 < 0.3 直接丢弃）→ 过滤掉明显不相关的\n3. **LLM 逐个评估**（深度理解匹配度）→ 给每条内容打分 0~1\n4. **准入阈值 + 已看去重**（confirmed ≥ 0.60, explore ≥ 0.58）→ 只留合格的\n5. **多样性压缩**（topic/style/source 三维去重）→ 最终输出的精品列表\n\n### 关键防护机制\n\n- **已看内容去重**：在 LLM 评估之前就跳过已推荐内容，不浪费 API 额度\n- **防过度探索**：探索内容比例上限约 20%，用户连续拒绝则降低频率\n- **内容疲劳控制**：同话题推荐后进入冷却期，负面反馈立即生效\n- **B站搜索冷却**：维护 IP 级限速计时器，触发限速后主动暂停"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "graph TD\n    A[SoulProfile 用户画像] -->|生成搜索词| B[各平台 API 搜索]\n    B -->|~100-300 条原始候选| C[Embedding 预过滤]\n    C -->|丢弃 sim<0.3| D[LLM 批量评估]\n    D -->|score 0~1| E[准入阈值过滤]\n    E -->|≥0.60/0.58| F[Topic 归一化]\n    F --> G[多样性压缩]\n    G -->|最终精品| H[推荐池]",
+                "caption": "五层漏斗管线：从用户画像到最终候选的递进过滤"
+              }
+            }
+          ]
+        },
+        {
+          "title": "第一层：LLM 驱动的搜索词生成",
+          "anchor": "practice-discovery-keyword-gen",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "搜索词的质量直接决定召回候选的质量。OpenBiliClaw **不用硬编码关键词**，而是让 LLM 根据用户画像动态生成。\n\n### 搜索词的黄金比例：25% 四象限分配\n\n| 象限 | 占比 | 来源 | 示例 |\n|------|------|------|------|\n| 一级兴趣域 | ~25% | interest_domains | 「科技 盘点」「游戏 推荐」 |\n| 二级细分角度 | ~25% | interests 细分 | 「客制化键盘 入门」「胶片摄影 教程」 |\n| 猜测兴趣 | ~25% | speculative_interests | 「城市建筑叙事」（系统推测） |\n| 跨域探索 | ~25% | 认知风格桥接 | 核心主题词不在已知兴趣中 |\n\n### 风格多样性保护\n\nPrompt 中规定：带「深度/原理/解析」等学术向关键词的不得超过 2 个。系统检测 `humor_preference`、`exploration_openness` 等信号，确保搜索词混合轻松形式。\n\n### 画像裁剪：LLM 只看到什么？\n\n`build_query_generation_profile_summary()` 构建**裁剪版画像**，故意丢弃高变动字段：\n\n| 保留的字段 | 上限 |\n|----------|------|\n| interest_domains | ≤16 域 |\n| interests | ≤64 条，MMR 多样性选择 |\n| speculative_interests | ≤8 条 |\n| disliked_topics | ≤64 条 |\n| cognitive_style / core_traits | ≤8 条 |\n\n**丢弃 awareness/insights**：它们每次画像更新都变，包含会让缓存 key 频繁失效。\n\n### MMR 多样性选择\n\n当兴趣超过 64 条时，用 **MMR（Maximal Marginal Relevance）** 选择子集：\n\n```\nmmr_score = 0.46 × novelty           // 与已选兴趣的差异度\n          + 0.27 × weight_score       // 归一化权重\n          + 0.19 × category_novelty   // 类别新颖度\n          + 0.08 × priority           // 基础优先级\n          - 0.48 × dislike_penalty    // 与不喜欢主题的相似度惩罚\n```\n\n### 冷启动保护\n\n当 `cold_start=true` 时：\n- `avoid_topics` 最多 2 个 query 可覆盖\n- 至少一半 query 来自 `prefer_axes` 或较低权重兴趣\n- 保留少量高权重兴趣入口，让首批内容有命中感\n\n### 搜索词缓存\n\n生成的搜索词缓存 6 小时，key 由画像摘要 + 池分布 hints 决定。画像变化或池分布显著改变时缓存自动失效。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# 搜索词生成 + 搜索执行核心流程（伪代码）\n\nasync def generate_queries(profile, pool_snapshot=None):\n    # 1. 从池快照提取供需信号\n    pool_hints = pool_snapshot.to_prompt_hints()\n    # 2. 检查缓存（相同画像+池状态不重复生成）\n    cached = cache.get(profile_digest, pool_hints)\n    if cached: return cached\n    # 3. 调用 LLM 生成 5~10 个搜索词\n    prompt = build_search_queries_prompt(\n        profile_summary=裁剪版画像,    # 丢弃 awareness/insights\n        pool_hints=pool_hints,         # 供需平衡\n    )\n    queries = await llm.complete(prompt)\n    # 4. LLM 失败时降级到本地生成\n    return queries or fallback_queries(profile)\n\nasync def execute_searches(queries):\n    for query in queries:\n        sleep(0.5 + random(0, 0.5))      # 随机抖动防检测\n        results = await bilibili_search(query)\n        if consecutive_empty >= 3: abort  # 风暴检测\n        if cooldown_remaining > 0: break  # 冷却检查",
+                "caption": "搜索词生成 + 搜索执行：LLM 优先，本地兜底，缓存去重，IP 保护"
+              }
+            },
+            {
+              "type": "text",
+              "text": "### 搜索执行：防风暴与 IP 保护\n\n搜索执行有三重防护：\n\n1. **随机抖动**：每个 query 之间 sleep 0.5-1.0s，避免触发 B站同步波峰检测\n2. **风暴检测**：连续 3 次空结果 → IP 被限流，立即中止剩余 query\n3. **冷却计时器**：触发限速后主动暂停，等下一个 refresh tick（60s 后）再试\n\n系统为搜索创建**专用 API 客户端**（不共享 `bilibili_client`），隔离搜索流量。专用客户端继承运行时 cookie，避免匿名请求触发 `v_voucher` 验证。\n\n### 交叉轮询\n\n搜索完成后，`_interleave_query_candidates()` 对候选做 round-robin 交叉轮询，确保每个 query 的候选均匀分布在 LLM 评估窗口中，避免某个 query 被截断遗漏。"
+            }
+          ]
+        },
+        {
+          "title": "第二层：Embedding 预过滤——用向量相似度省钱",
+          "anchor": "practice-discovery-embedding-prefilter",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "LLM API 调用有成本——每次评估约消耗 1000~2000 tokens。**Embedding 预过滤**用极低成本提前过滤明显不相关的候选，让 LLM 只处理真正值得评估的内容。\n\n### 工作原理\n\n1. 将候选内容 `title + description` 编码为向量\n2. 取用户画像**前 10 个兴趣项**编码为向量\n3. 计算候选向量与每个兴趣向量的**余弦相似度**，取最大值 `max_sim`\n4. 如果 `max_sim < 0.3` 且不是 explore 策略 → 直接返回低分，**跳过 LLM**\n\n### 为什么 explore 策略豁免？\n\nExplore 的目标是**跨域探索**，推荐内容故意偏离已知兴趣。如果也用 0.3 阈值，所有 explore 候选都会被杀掉。\n\n### 成本效益\n\n| 方案 | LLM 调用数 | 成本 |\n|------|-----------|------|\n| 全量 LLM | 300 次 | 高 |\n| Embedding 预过滤 + LLM | ~150 次 | **降低 50%** |\n| 纯 Embedding | 0 次 | 极低但精度差 |\n\n### Prefilter Audit：影子审计\n\n`prefilter_audit.py` 是隐私安全的预过滤审计系统：\n- **隐私安全**：候选身份通过域分离的 SHA-256 摘要标识，不存储文本/URL\n- **质量门控**：准入召回率 ≥ 99%，每平台召回率 ≥ 95%，explore 层零假阴性\n- **存储约束**：30 天保留期 + 最多 20,000 行上限"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# Embedding 预过滤核心（伪代码）\nasync def embedding_prefilter(content, profile):\n    if not embedding_service or not profile.interests:\n        return None  # 无 embedding 服务，跳过\n\n    content_vec = embed(content.title + \" \" + content.description)\n    max_sim = 0.0\n    for interest in profile.interests[:10]:\n        sim = cosine_similarity(content_vec, embed(interest.name))\n        max_sim = max(max_sim, sim)\n\n    # 与所有兴趣相似度 < 0.3 且非 explore → 直接丢弃\n    if max_sim < 0.3 and content.source_strategy != \"explore\":\n        return round(max_sim * 0.5, 4)  # 低分，不调用 LLM\n    return None  # 通过预过滤，交给 LLM 评估",
+                "caption": "Embedding 预过滤：余弦相似度 0.3 阈值提前拦截不相关候选"
+              }
+            }
+          ]
+        },
+        {
+          "title": "第三层：LLM 批量评估——深度理解匹配度",
+          "anchor": "practice-discovery-llm-eval",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "LLM 评估是管线中**最核心也最昂贵**的环节。每条候选内容都会被发给 LLM，让模型基于完整用户画像判断匹配度。\n\n### 评估输出：5 个字段\n\n| 字段 | 含义 | 示例 |\n|------|------|------|\n| `score` | 匹配度评分（0~1） | 0.85 |\n| `reason` | 一句中文解释 | 「用户对精密机械的审美偏好与钟表修复纪录片高度匹配」 |\n| `topic_group` | 2~4 词粗分类 | 「精密制造」 |\n| `style_key` | 13 种观看模式之一 | 「沉浸式观察」 |\n| `franchise_key` | IP/系列名（可空） | 「原神」 |\n\n`franchise_key` 让系统识别「同一 IP 的不同切面」——多样性压缩时避免推荐列表被同一 IP 占满。\n\n### 批量评估 + Prompt 缓存\n\n候选内容**分批打包**（默认 45 条/批，硬上限 90），一次 LLM 调用评估一整批。\n\n关键优化：**system prompt 是模块级常量**，100% 静态，所有变量放在 user prompt 中。利用 provider 侧 prompt cache（DeepSeek 90%、Claude 90%、OpenAI 50%）。\n\n### 评估缓存与负样本机制\n\n缓存 key 由四因素组成：\n- **content_id**：内容身份\n- **profile_digest**：画像摘要\n- **negative_digest**：负样本摘要——用户标记「不感兴趣」的内容\n- **evaluation_bucket**：每小时刷新\n\n当用户标记「不感兴趣」→ negative_digest 变化 → 缓存失效 → 重新评估。确保**负反馈立即影响后续发现**。\n\n### 时间语义评估\n\nLLM 评估时还返回时间语义字段：\n\n| 字段 | 含义 |\n|------|------|\n| `temporal_class` | breaking/current/versioned/evergreen/historical/unknown |\n| `temporal_confidence` | 分类置信度（0~1） |\n| `temporal_reason` | 分类理由 |\n\n缺失或错误的时间元数据降级到 `unknown`（零置信度），不影响核心评估。\n\n### 确定性评估线路\n\n`eval_payload.py` 定义 `CanonicalEvaluationBatch`——稀疏表示只发送非空字段减少 token，使用请求本地 ID 避免全局 ID 泄漏。`eval_reason.py` 规范化评估原因：分数 < 0.5 不记录，截断到 30 码点。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# LLM 批量评估核心流程（伪代码）\nasync def evaluate_content_batch(contents, profile, batch_size=45):\n    # Step 1: 跳过已推荐内容（不浪费 LLM 额度）\n    viewed_keys = get_recent_viewed_keys()\n    eval_pairs = [(i, c) for i, c in enumerate(contents)\n                  if c.keys & viewed_keys == empty]\n\n    # Step 2: 检查评估缓存\n    negative_digest = hash(get_negative_exemplars())\n    for content in eval_contents:\n        cache_key = (content.id, profile_digest, negative_digest, time_bucket)\n        if cache.hit(cache_key):\n            scores[i] = cache.get(cache_key)  # 命中缓存\n        else:\n            uncached.append(content)\n\n    # Step 3: 分批调用 LLM（45 条/批，最多 2 批并行）\n    for batch in chunked(uncached, batch_size):\n        response = await llm.evaluate(\n            system=STATIC_SYSTEM_PROMPT,   # 100% 静态，利用 prompt cache\n            user=profile + batch + context,\n        )\n        for item in parse_json(response):\n            content.score = item[\"score\"]\n            content.reason = item[\"reason\"]\n            content.topic_group = item[\"topic_group\"]\n            content.style_key = item[\"style_key\"]\n            content.franchise_key = item[\"franchise_key\"]",
+                "caption": "批量评估：已看去重 → 缓存命中 → LLM 分批 → 结果解析"
+              }
+            }
+          ]
+        },
+        {
+          "title": "第四层：准入阈值与多样性压缩",
+          "anchor": "practice-discovery-admission-diversity",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "LLM 打完分后，还有两道关卡：准入阈值（够不够格）和多样性压缩（会不会太同质）。\n\n### 准入阈值\n\n| 策略 | 阈值 | 理由 |\n|------|------|------|\n| confirmed（search/trending/related_chain） | **0.60** | 已知兴趣方向的最低分 |\n| explore（跨域探索） | **0.58** | 跨域内容天然匹配度较低，略低鼓励探索 |\n\n`effective_admission_threshold()` 允许调用方**提高**（但不能降低）策略底线。\n\n### Topic 归一化：Embedding 聚类\n\n不同策略的 `topic_key` 粒度差异巨大：\n\n| 策略 | topic_key 示例 | 粒度 |\n|------|---------------|------|\n| search | 「moba经济曲线动态博弈」 | 极细 |\n| trending | 「网络游戏」 | 粗 |\n| explore | 「精密机械钟表修复与微观结构」 | 中等 |\n\n`_normalize_topic_keys()` 将所有 topic_key 用 embedding 编码，余弦相似度 > 0.75 的聚类为一组，选择长度适中的标签作为规范代表。\n\n### 多样性压缩：三维去重\n\n| 维度 | 含义 | 控制参数 |\n|------|------|----------|\n| topic | 同一话题不重复 | 同 topic 最多保留 N 条 |\n| style_key | 同一观看模式不过量 | per_style_cap |\n| source_strategy | 每个发现来源保底 | per_source_floor / per_source_ceiling |\n\n**source_strategy 保底机制**：\n1. 每个来源保底 `limit / 来源数` 个名额——search 不会被 trending 高分挤掉\n2. 单个来源最多占 35%——防止 related_chain 垄断"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "graph LR\n    A[LLM 打分后的候选] -->|score ≥ 0.60| B[准入过滤]\n    A -->|score < 0.60| X[丢弃]\n    B --> C[Topic 归一化]\n    C --> D[多样性压缩]\n    D --> E{每个来源保底名额}\n    E -->|search 保底| F[最终列表]\n    E -->|trending 保底| F\n    E -->|explore 保底| F\n    D -->|per_source_ceiling=35%| G[单来源不垄断]\n    G --> F",
+                "caption": "准入 → 归一化 → 三维多样性压缩的完整流程"
+              }
+            }
+          ]
+        },
+        {
+          "title": "策略体系：5 大策略 + 回退机制",
+          "anchor": "practice-discovery-strategies",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Discovery Engine 内置 5 大发现策略，独立搜索、独立评估，结果合并到同一候选池。\n\n### 策略对比\n\n| 策略 | 搜索方式 | 目标 | 准入阈值 |\n|------|---------|------|----------|\n| **search** | LLM 生成搜索词 → 平台搜索 | 精准匹配已知兴趣 | 0.60 |\n| **trending** | B站热门/排行榜分区轮转 | 发现热门内容 | 0.60 |\n| **related_chain** | 从已推荐内容的相关推荐链延伸 | 沿兴趣链深入 | 0.60 |\n| **explore** | 跨域搜索，主题偏离已知兴趣 | 惊喜发现 | 0.58 |\n| **douyin_direct** | 抖音直接搜索 | 跨平台覆盖 | 0.60 |\n\n### 并行执行与预算控制\n\n所有策略用 `asyncio.gather` 并行执行，但有严格预算：\n- **搜索预算**：`search_budget_total = 30` 次 B站 API 调用，三个搜索策略平分\n- **LLM 并发**：`llm_evaluation_concurrency = 32` 个并行评估\n- **对话优先**：用户正在和 Agent 聊天时，发现的 LLM 调用自动暂停\n\n### 回退（Backfill）机制\n\n`discover()` 分两阶段：主发现 → 结果不足时创建每个策略的「宽松版」（降低阈值），再跑一轮补充。"
+            },
+            {
+              "type": "text",
+              "text": "### Trending 策略：排行榜分区轮转\n\n维护 20+ 分区的排行榜轮转。每次刷新根据画像哈希**轮转选择 4 个分区**（加「综合热门」共 5 个）。不同画像的用户看到不同分区。\n\n```python\n# trending 分区轮转（伪代码）\nRID_TO_TOPIC = {0: \"综合热门\", 3: \"音乐\", 4: \"游戏\", 36: \"科技\", ...}\nselected_rids = select_by_profile_hash(profile, count=4)\n# 为什么不只拉「综合热门」？因为分区热门能发现用户兴趣域内\n# 但不在全站热门视野中的内容\n```\n\n### Related Chain 策略：链式探索\n\n完全不依赖搜索词，利用 B站「相关推荐」API 进行链式探索：\n\n1. **选择种子**：5 个种子视频，3/5 来自高成本行为（favorite/coin/share），2/5 来自跨域策略\n2. **两层递归**：对每个种子调用 `get_related_videos()`，最多 2 层深度\n3. **防信息茧房**：跨域种子 + 标题前 4 字符去重 + 同 UP 主上限\n\n### Explore 策略：跨域探索\n\nexplore 先生成**探索领域**（domains），再基于领域生成搜索词：\n\n1. **领域生成**：告诉 LLM 当前池中已覆盖的 topic_groups，让它避开饱和领域\n2. **新颖度加成**：`score = LLM_score × 0.60 + novelty × exploration_openness × 0.40`\n3. **领域去重**：embedding 余弦相似度 ≥ 0.85 才拒绝（只拒绝真正同义词）\n4. **非锚定优先**：完全偏离已知兴趣的领域优先于有语义关联的领域"
+            },
+            {
+              "type": "callchain",
+              "callchain": {
+                "endpoint": "ContentDiscoveryEngine.discover()",
+                "steps": [
+                  {
+                    "layer": "编排",
+                    "filePath": "discovery/engine.py",
+                    "functionName": "discover()",
+                    "explanation": "发现引擎主入口。注册 5 大策略，调用 _run_strategies() 并行执行，合并结果。",
+                    "keyPoint": "策略模式：新增发现方式只需实现 DiscoveryStrategy 接口"
+                  },
+                  {
+                    "layer": "策略执行",
+                    "filePath": "discovery/engine.py",
+                    "functionName": "_run_strategies()",
+                    "explanation": "asyncio.gather 并行执行所有策略。支持两阶段拆分（search 先执行，释放 API 冷却时间）。",
+                    "keyPoint": "两阶段拆分：search 先跑完，再跑 trending/related_chain/explore"
+                  },
+                  {
+                    "layer": "结果合并",
+                    "filePath": "discovery/engine.py",
+                    "functionName": "_merge_and_rank()",
+                    "explanation": "合并多策略结果，按 relevance_score 降序。同一内容多策略发现只保留最高分。",
+                    "keyPoint": "跨策略去重：同一条视频被 search 和 trending 同时发现，只保留高分那条"
+                  },
+                  {
+                    "layer": "多样性压缩",
+                    "filePath": "discovery/engine.py",
+                    "functionName": "_compress_topic_repeats()",
+                    "explanation": "三维去重（topic/style/source），每个来源保底，单来源最多 35%。",
+                    "keyPoint": "保底机制确保 search 不被 trending 高分完全挤掉"
+                  },
+                  {
+                    "layer": "回退补充",
+                    "filePath": "discovery/engine.py",
+                    "functionName": "_run_backfill()",
+                    "explanation": "主发现结果不足时，创建宽松版策略再跑一轮。",
+                    "keyPoint": "回退是安全网——确保推荐列表不会太短"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "后台刷新：6 个独立循环持续补充候选池",
+          "anchor": "practice-discovery-background-refresh",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "发现引擎不是「用户请求时才工作」——它有完整的**后台自动刷新机制**。\n\n### 6 个独立后台循环\n\n`RefreshController` 维护 6 个独立 `while True` 循环，互不阻塞：\n\n| 循环 | 频率 | 职责 |\n|------|------|------|\n| `_loop_refresh` | 每 60 秒 | 主发现循环，触发策略执行 |\n| `_loop_pool_precompute` | 每 60 秒 | 为池中新内容生成推荐表达 |\n| `_loop_candidate_eval` | 每 60 秒 | 处理待评估候选 |\n| `_loop_soul_pipeline` | 每 60 秒 | 画像更新 |\n| `_loop_proactive_push` | 每 120 秒 | 推送新发现内容通知 |\n| `_loop_pool_maintenance` | 定期 | 清理过期/低质量池内容 |\n\n**为什么拆成 6 个？** 一个慢循环不能阻塞其他循环。B站搜索被限速时 `_loop_refresh` 可能卡住几分钟，但 precompute 和 candidate_eval 不受影响。"
+            },
+            {
+              "type": "text",
+              "text": "### 刷新触发条件\n\n`_build_refresh_plan()` 根据条件判断是否刷新：\n\n```python\n# 刷新触发条件（伪代码）\nif pool_available < pool_target_count:        # 池子低于 300 条\n    trigger_replenishment()\n\nif pending_events >= 6:                       # 积累了 >= 6 个信号事件\n    trigger([\"search\", \"related_chain\"])\n\nif now - last_trending_refresh > 3 minutes:   # trending 超时\n    trigger([\"trending\"])\n\nif now - last_explore_refresh > 3 minutes:    # explore 超时\n    trigger([\"explore\"])\n```\n\n### 信号事件触发\n\n`signal_event_threshold = 6`：用户每看 6 个视频（或点赞/收藏/投币），系统触发新一轮发现。**用户行为立即影响后续推荐**。\n\n### 池目标与多来源配额\n\n`pool_target_count = 300`。多来源配额：\n\n| 来源 | 配额 |\n|------|------|\n| bilibili | 65% |\n| youtube | 15% |\n| xhs（小红书） | 10% |\n| zhihu（知乎） | 5% |\n| reddit | 5% |"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "graph TD\n    A[用户行为事件] -->|view/like/favorite| B{>= 6 个事件?}\n    B -->|是| C[触发 search + related_chain]\n    B -->|否| D{池子 < 300?}\n    D -->|是| E[触发 replenishment]\n    D -->|否| F{trending 超时 3min?}\n    F -->|是| G[触发 trending]\n    F -->|否| H{explore 超时 3min?}\n    H -->|是| I[触发 explore]\n    H -->|否| J[跳过本轮]\n    C --> K[多策略并行执行]\n    E --> K\n    G --> K\n    I --> K\n    K --> L[候选入池]\n    L --> M[precompute 生成表达]",
+                "caption": "后台刷新触发条件：事件驱动 + 定时 + 池容量"
+              }
+            }
+          ]
+        },
+        {
+          "title": "关键词追踪与五维标签体系",
+          "anchor": "practice-discovery-keyword-tracking",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "每条发现的内容都有完整的溯源标签，让你能追溯「这条内容是怎么被发现的」。\n\n### 五维标签体系\n\n| 维度 | 来源 | 示例 | 用途 |\n|------|------|------|------|\n| `source_keyword_id` | 搜索词 ID | `42`（指向「机械键盘 评测」） | 关键词溯源 |\n| `topic_key` | 内容分区/标题提取 | `网络游戏`、`精密制造` | 细粒度去重 |\n| `topic_group` | LLM 评估输出 | `人工智能`、`美食` | 粗分类聚合 |\n| `style_key` | LLM 评估输出（13 选 1） | `沉浸式观察`、`知识获取` | 观看模式多样性 |\n| `franchise_key` | LLM 评估输出 | `原神`、`黑神话:悟空` | 同 IP 去重 |\n| `source_strategy` | 策略名称 | `search`、`trending` | 策略来源追踪 |\n\n### discovery_keywords 表\n\n记录每个搜索词的完整生命周期：\n\n```sql\n-- 关键词状态机（伪代码）\nCREATE TABLE discovery_keywords (\n    id          INTEGER PRIMARY KEY,\n    platform    TEXT,    -- bilibili/youtube/zhihu/reddit\n    keyword     TEXT,    -- 搜索词原文\n    keyword_kind TEXT,   -- regular/speculative/cross_domain\n    status      TEXT,    -- pending → claimed → executing → used/expired\n    source_interest TEXT, -- 来自哪个兴趣标签\n    yield_count INTEGER  -- 产出了多少条内容\n);\n```\n\n`content_cache` 通过 `source_keyword_id` 关联——每条内容都能追溯到是哪个搜索词产出的。\n\n### 关键词状态机\n\n```\npending → claimed → executing → used\n                  ↓\n               expired（超时未使用）\n```\n\n唯一性约束只在 `pending/claimed/executing` 状态——`used/expired` 不阻止同一关键词被重新生成，允许系统重新使用效果好的关键词。"
+            },
+            {
+              "type": "table",
+              "table": {
+                "headers": [
+                  "标签维度",
+                  "数据来源",
+                  "更新时机",
+                  "去重作用"
+                ],
+                "rows": [
+                  [
+                    "source_keyword_id",
+                    "搜索策略写入",
+                    "发现时",
+                    "同关键词产出的内容可识别"
+                  ],
+                  [
+                    "topic_key",
+                    "策略提取 + LLM 归一化",
+                    "发现时 + 归一化后",
+                    "细粒度话题去重"
+                  ],
+                  [
+                    "topic_group",
+                    "LLM 评估输出",
+                    "评估时",
+                    "粗分类聚合"
+                  ],
+                  [
+                    "style_key",
+                    "LLM 评估输出",
+                    "评估时",
+                    "观看模式多样性控制"
+                  ],
+                  [
+                    "franchise_key",
+                    "LLM 评估输出",
+                    "评估时",
+                    "同 IP 去重（原神/黑神话等）"
+                  ],
+                  [
+                    "source_strategy",
+                    "策略名称",
+                    "发现时",
+                    "策略来源追踪 + 保底机制"
+                  ]
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "负样本机制：时间衰减与前缀去重",
+          "anchor": "practice-discovery-negative-exemplars",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "当用户标记内容为「不感兴趣」时，系统不只是移除这条内容——它把标题作为**负样本**传给 LLM，让模型在后续评估中**主动降低类似内容的分数**。\n\n### 时间衰减\n\n`soul/negative_exemplars.py` 维护一个时间衰减的负样本列表：\n\n```python\n# 负样本核心逻辑（伪代码）\ndef recent_negative_exemplars(event_store, limit=16, half_life_days=14):\n    rows = query_negative_events(limit=200)\n    for row in rows:\n        weight = exp(-age_days / 14)   # 14天前权重=0.5，28天前=0.25\n    scored.sort(desc)\n    deduped = dedupe_by_prefix(scored)  # 前 20 字符相同视为重复\n    return deduped[:16]\n```\n\n半衰期 14 天：一个月前的负样本权重只有 25%，逐渐淡出。用户偏好会变化，负样本不能永远主导。\n\n### 前缀去重\n\n如果用户连续标记 5 条「原神」负样本，列表不应全是原神：\n\n```python\n# 前缀去重（伪代码）\ndef dedupe_by_prefix(scored):\n    seen = set()\n    for weight, record in scored:\n        prefix = normalize(record.title)[:20]  # 取前 20 字符\n        if prefix not in seen:\n            seen.add(prefix)\n            yield record\n```\n\n20 字符足够区分不同话题，但能识别同话题变体。"
+            },
+            {
+              "type": "text",
+              "text": "### 负样本如何影响 LLM 评估\n\n负样本摘要（negative_digest）是负样本列表的哈希。当用户标记新负样本 → negative_digest 变化 → 评估缓存失效 → 所有候选重新评估。\n\nLLM prompt 中的负样本：\n\n```\n以下是用户最近标记为「不感兴趣」的内容标题：\n- 「原神 3.8 版本前瞻直播」（3天前）\n- 「机械键盘 轴体对比」（7天前）\n\n请主动降低与这些标题相似的内容的分数。\n```\n\n**负样本即时生效**：negative_digest 变化导致缓存失效，负反馈立即影响发现。"
+            }
+          ]
+        },
+        {
+          "title": "模块总结：关键指标与设计亮点",
+          "anchor": "practice-discovery-summary",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 5,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 发现引擎关键指标\n\n| 指标 | 数值 | 说明 |\n|------|------|------|\n| 发现策略 | **5 种** | search/explore/trending/related_chain/douyin |\n| 漏斗层数 | **5 层** | 关键词→Embedding→LLM→阈值→多样性 |\n| 搜索词数量 | **5~10 个/轮** | 25% 四象限分配 |\n| Embedding 阈值 | **0.3** | 余弦相似度低于此值直接丢弃 |\n| 准入阈值（confirmed） | **0.60** | 已确认兴趣方向最低分 |\n| 准入阈值（explore） | **0.58** | 跨域探索略低 |\n| 批量评估大小 | **45 条/批** | 硬上限 90 |\n| 候选池上限 | **500 条** | 超过后触发维护清理 |\n| 域缓存 TTL | **6 小时** | explore 策略领域缓存 |\n| Embedding 去重阈值 | **0.85** | 语义相似度过高则去重 |\n| 负样本半衰期 | **14 天** | exp(-age/14) 时间衰减 |\n| 负样本上限 | **16 条** | 前缀去重防垄断 |\n| Prompt 缓存利用率 | **90%** | provider 侧缓存命中 |\n\n### 设计亮点\n\n1. **五层漏斗**：从粗到精递进过滤，每层用不同技术平衡成本与精度\n2. **25% 四象限搜索词**：确保召回多样性，避免信息茧房\n3. **Embedding 预过滤**：降低 50% LLM 调用成本\n4. **Prompt 缓存优化**：system prompt 100% 静态，利用 provider 侧缓存\n5. **负样本即时生效**：negative_digest 变化导致缓存失效，负反馈立即影响发现\n6. **跨平台去重**：content_id + 平台前缀双重匹配\n7. **话题疲劳控制**：count^1.5 饱和曲线，双轴疲劳\n8. **确定性评估线路**：CanonicalEvaluationBatch 确保格式一致、可重现"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,239 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：推荐引擎的职责——从发现到表达",
+          "anchor": "practice-recommendation-background",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "beginner",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Recommendation Engine 是内容管线的最后一站。Discovery Engine 负责「找到什么」，Recommendation Engine 负责「如何呈现」。\n\n### 核心职责\n\n1. **排序（Ranking）**：对候选池中的内容进行个性化排序\n2. **表达（Expression）**：为每个推荐生成「朋友式」的推荐理由\n3. **策展（Curation）**：选择最终展示给用户的内容组合\n4. **视觉匹配**：利用封面图像的多模态嵌入与用户审美偏好匹配\n5. **惊喜评分（Delight Scoring）**：评估内容能给用户带来多大程度的「惊喜感」\n\n### 从发现到推荐的完整链路\n\n理解推荐引擎之前，需要先清楚它接收的输入从哪来：\n\n| 阶段 | 负责模块 | 输出 |\n|------|---------|------|\n| 五层漏斗过滤 | Discovery Engine | 带 relevance_score + topic_group + style_key 的候选列表 |\n| 入池 | candidate_pool | 去重、老化、容量控制后的推荐池 |\n| 排序 + 表达 + 策展 | **Recommendation Engine** | 最终呈现给用户的推荐列表 |"
+            },
+            {
+              "type": "text",
+              "text": "### 为什么推荐需要「表达」？\n\n传统推荐系统的推荐理由通常是「猜你喜欢」或「因为你看了XX」。OpenBiliClaw 的目标是像朋友一样推荐——它应该能说出「我觉得你会喜欢这个视频，因为你对精密机械结构的审美偏好，在这个建筑纪录片里能找到共鸣」。\n\n这种表达不是简单的模板填充，而是由 LLM 基于用户画像和内容特征**动态生成**的。"
+            }
+          ]
+        },
+        {
+          "title": "核心流程：排序、表达与策展",
+          "anchor": "practice-recommendation-flow",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "callchain",
+              "callchain": {
+                "endpoint": "RecommendationEngine.serve()",
+                "steps": [
+                  {
+                    "layer": "Orchestration",
+                    "filePath": "recommendation/engine.py",
+                    "functionName": "serve()",
+                    "explanation": "推荐引擎的主入口。从候选池中拉取内容，经过排序、表达、策展三个步骤，最终返回给前端展示。",
+                    "keyPoint": "serve() 的设计理念是「一次调用，完整推荐」——调用方不需要了解内部流程"
+                  },
+                  {
+                    "layer": "Pool Curator",
+                    "filePath": "recommendation/curator.py",
+                    "functionName": "PoolCurator.curate()",
+                    "explanation": "策展器负责最终的推荐组合选择。它确保推荐列表的多样性（不会全是同一类内容）、新鲜度（不会全是旧内容）、以及惊喜/熟悉的比例平衡。",
+                    "keyPoint": "策展器是「编辑」而非「算法」——它根据内容特性做编排决策，而非纯数学排序"
+                  },
+                  {
+                    "layer": "Delight Scoring",
+                    "filePath": "recommendation/delight.py",
+                    "functionName": "precompute_delight_scores()",
+                    "explanation": "惊喜评分器评估每个候选内容能给用户带来多大的「惊喜感」。它综合考虑内容的新颖度、与用户兴趣的匹配深度、以及视觉封面的吸引力。后台异步计算，不阻塞用户交互。",
+                    "keyPoint": "惊喜评分是 OpenBiliClaw 与传统推荐系统最大的差异化——它不追求「最相关」，而是追求「最让你惊喜」"
+                  },
+                  {
+                    "layer": "Visual Profile",
+                    "filePath": "recommendation/visual_profile.py",
+                    "functionName": "compute_visual_bonus()",
+                    "explanation": "视觉画像匹配器利用多模态嵌入模型（如 qwen3-vl-embedding，dim=1024）计算封面图像与用户兴趣锚点的余弦相似度，作为 delight_score 的加成因子（最大 +0.05）。",
+                    "keyPoint": "视觉加成是可选的、单向的、加性的——不会因为封面不匹配而扣分，只在匹配时给予微小加成"
+                  },
+                  {
+                    "layer": "Expression",
+                    "filePath": "recommendation/engine.py",
+                    "functionName": "generate_expression()",
+                    "explanation": "推荐表达生成器使用 LLM 为每个推荐内容生成个性化的推荐理由。它输入用户画像和内容元数据，输出自然语言的推荐语。",
+                    "keyPoint": "推荐表达是 LLM 调用最频繁的环节之一——每个推荐都需要独立的表达生成"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# recommendation/engine.py — serve_with_result() 核心入口\n# 所有推荐路径（generate/reshuffle/append）最终汇聚于此\n\nasync def _serve_with_result_unlocked(\n    self,\n    profile: SoulProfile,\n    *,\n    limit: int,\n    excluded_bvids: frozenset[str],\n    expression_mode: Literal[\"realtime\", \"precomputed\"] = \"precomputed\",\n    source_platform: str = \"\",\n) -> ServeResult:\n    \"\"\"统一推荐入口——只从候选池中选取。\n    \n    推荐引擎完全与 Discovery 解耦：只从 content_cache 的\n    候选池读取，不直接调用发现引擎。\n    \"\"\"\n    # 候选数量策略：翻页时 multiplier=4，首次 multiplier=3\n    # 确保有足够候选经过排序/过滤后仍能凑够 limit 条\n    multiplier = 4 if excluded_bvids else 3\n    candidate_limit = max(limit * multiplier, 40) + len(excluded_bvids)\n\n    # 加载池快照：一次性读取候选行 + 历史记录\n    snapshot = await self._database.load_pool_serve_snapshot_async(\n        limit=candidate_limit,\n        xhs_self_nickname=self._xhs_self_nickname(),\n        curator_history_limit=history_limit,\n    )\n    candidates = self._enforce_platform_scope(\n        self._rows_to_discovered(list(snapshot.candidate_rows)),\n        scope,\n    )\n    # 平台范围强制检查：scoped 请求绝不能泄漏其他平台的内容\n    # 使用 source_family（与存储计数同一函数）而非 source_platform\n    # 因为遗留行的 platform 可能为空，默认 bilibili 会误判\n\n    # 后续流程：PoolCurator 评分 → 即时不喜欢过滤 → 表达生成 → 返回",
+                "caption": "recommendation/engine.py — _serve_with_result_unlocked()：统一推荐入口，与 Discovery 完全解耦"
+              }
+            }
+          ]
+        },
+        {
+          "title": "推荐表达的 Prompt 工程",
+          "anchor": "practice-recommendation-expression",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "推荐表达（Expression）是 OpenBiliClaw 最具辨识度的功能——每条推荐都有一段个性化的「朋友式」推荐语。这段文字由 LLM 动态生成，不是模板填充。\n\n### Prompt 结构\n\n表达生成的 Prompt 包含多层信息：\n\n| 层级 | 内容 | 用途 |\n|------|------|------|\n| profile_core | 用户的核心性格特征 | 确定表达语气 |\n| profile_life_context | 生活状态、作息习惯 | 调整推荐语的时间感 |\n| profile_interests | 兴趣标签和权重 | 找到内容与用户的连接点 |\n| profile_style_context | 认知风格、深度偏好 | 决定推荐语的学术/轻松程度 |\n| content_metadata | 内容标题、描述、评分 | 推荐的核心素材 |\n| discovery_context | 发现策略（search/explore） | 调整推荐语的确定度 |\n\n### 表达风格的分层\n\nPrompt 中有一个关键设计：**表达风格根据用户画像动态调整**。\n\n- `depth_preference` 高的用户 → 推荐语更理性、更有分析性\n- `humor_preference` 高的用户 → 推荐语更轻松、更有梗\n- `exploration_openness` 高的用户 → 推荐语更强调「你可能没想过，但是...」\n\n这意味着同一个视频，对不同的用户会产生完全不同的推荐语。"
+            }
+          ]
+        },
+        {
+          "title": "边界情况：推荐去重与冷启动",
+          "anchor": "practice-recommendation-edge",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 推荐历史去重\n\n系统维护完整的推荐历史，确保：\n- 同一内容不会被重复推荐（即使在不同推荐轮次中）\n- 已推荐但未点击的内容会进入冷却期\n- 用户明确标记为「不感兴趣」的内容及其**同一 franchise_key** 的内容都被降权\n\n### 降级模式\n\n当 LLM 不可用时（API 故障、配额耗尽），推荐引擎会进入降级模式：\n- 使用缓存的 delight_score 排序（而非实时计算）\n- 使用预生成的推荐表达（如果有缓存）\n- 如果连缓存都没有，退化为纯分数排序 + 通用推荐语\n\n这确保了即使 LLM 全部宕机，用户仍然能看到推荐——只是推荐语会缺乏个性化。\n\n### 冷启动处理\n\n新用户没有足够的行为数据时，推荐引擎会：\n1. 使用引导初始化（InitCoordinator）收集初步偏好\n2. 基于平台热门内容做初始推荐\n3. 快速从用户反馈中学习，加速画像构建\n4. 视觉画像在积累足够反馈后才激活——太少的反馈会导致质心不准确"
+            }
+          ]
+        },
+        {
+          "title": "即时不喜欢过滤：推荐输出的最后一道防线",
+          "anchor": "practice-recommendation-immediate-dislike",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`recommendation/exclusion.py`（108 行）是 v0.3.201 新增的**即时不喜欢过滤模块**。它解决了一个关键问题：用户标记「不喜欢」某个主题后，已经缓存在推荐池中的内容需要被立即过滤，而不是等到下次刷新。\n\n### 核心设计\n\n发现引擎可能继续广泛地获取供给，但一旦不喜欢主题被持久化，缓存/历史行必须在返回给用户之前被重新检查。\n\n```python\n# recommendation/exclusion.py — 核心过滤函数\ndef filter_recommendation_rows(\n    rows: Sequence[_Row],\n    disliked_topics: Sequence[str],\n    *,\n    restore_on_total_fuzzy_match: bool = True,\n) -> list[_Row]:\n    \"\"\"用当前不喜欢主题过滤缓存/历史推荐行。\n    \n    精确结构化主题匹配总是排除。\n    模糊标题/正文/标签匹配也被排除，除了饥饿保护机制。\n    \"\"\"\n    items = list(rows)\n    terms = normalize_dislike_topics(disliked_topics)\n    if not items or not terms:\n        return items\n    filtered = [row for row in items if not recommendation_row_matches(row, terms)]\n    # 饥饿保护：如果所有行都被模糊匹配过滤，恢复精确安全的行\n    if filtered or not restore_on_total_fuzzy_match:\n        return filtered\n    return [row for row in items if not recommendation_row_matches_exact(row, terms)]\n```\n\n### 两层匹配策略\n\n| 匹配类型 | 字段 | 行为 |\n|---------|------|------|\n| 精确匹配 | topic/topic_label/topic_key/topic_group/pool_topic_label | 总是排除 |\n| 模糊匹配 | title/topic/description/body_text/up_name/tags | 排除，但有饥饿保护 |\n\n**饥饿保护**：如果模糊匹配导致所有推荐行都被过滤（用户会看到空列表），系统会恢复那些精确匹配安全的行——确保用户至少能看到一些内容，而不是空白页面。\n\n### 规范化与缓存失效\n\n```python\ndef normalize_dislike_match_text(value: object) -> str:\n    \"\"\"匹配已有的服务时小写/空白规范化。\"\"\"\n    text = str(value or \"\").strip().lower()\n    return re.sub(r\"\\s+\", \"\", text) if text else \"\"\n\ndef disliked_topics_digest(topics: Sequence[str]) -> str:\n    \"\"\"哈希规范化的有效不喜欢快照用于缓存失效。\"\"\"\n    payload = json.dumps(\n        sorted(normalize_dislike_topics(topics)),\n        ensure_ascii=False,\n        separators=(\",\", \":\"),\n    )\n    return hashlib.sha256(payload.encode(\"utf-8\")).hexdigest()\n```\n\n当用户标记新的不喜欢主题时，`disliked_topics_digest` 会变化，触发评估缓存失效，确保后续发现流程使用最新的过滤规则。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# recommendation/exclusion.py — 完整的双层匹配实现\n# 设计哲学：发现引擎持续获取供给，但不喜欢主题一旦持久化，\n# 缓存行必须在返回用户前被重新检查\n\ndef recommendation_row_matches(row, disliked_terms) -> bool:\n    \"\"\"判断推荐行是否匹配精确或模糊的不喜欢字段。\"\"\"\n    # 第一层：精确结构化主题匹配（总是排除）\n    if recommendation_row_matches_exact(row, disliked_terms):\n        return True\n    # 第二层：模糊匹配（标题/描述/标签/UP主名）\n    fields = [\n        normalize_dislike_match_text(row.get(\"title\")),\n        normalize_dislike_match_text(row.get(\"topic\")),\n        normalize_dislike_match_text(row.get(\"topic_label\")),\n        normalize_dislike_match_text(row.get(\"description\")),\n        normalize_dislike_match_text(row.get(\"body_text\")),\n        normalize_dislike_match_text(row.get(\"up_name\")),\n        normalize_dislike_match_text(row.get(\"tags\")),\n    ]\n    # 任一不喜欢术语出现在任一字段中 → 匹配\n    return any(term in field for term in disliked_terms\n               for field in fields if field)\n\ndef recommendation_row_matches_exact(row, disliked_terms) -> bool:\n    \"\"\"精确匹配：只检查结构化主题字段。\"\"\"\n    exact_fields = {\n        normalize_dislike_match_text(row.get(\"topic\")),\n        normalize_dislike_match_text(row.get(\"topic_label\")),\n        normalize_dislike_match_text(row.get(\"topic_key\")),\n        normalize_dislike_match_text(row.get(\"topic_group\")),\n        normalize_dislike_match_text(row.get(\"pool_topic_label\")),\n    }\n    exact_fields.discard(\"\")\n    return any(term in exact_fields for term in disliked_terms)\n\n# 设计决策：为什么 normalize 去除所有空白？\n# 因为「原神」和「原 神」应该被视为同一主题。\n# 小写+去空白确保匹配不受格式差异影响。",
+                "caption": "recommendation/exclusion.py — 双层匹配：精确主题匹配 + 模糊文本匹配 + 饥饿保护回退"
+              }
+            }
+          ]
+        },
+        {
+          "title": "模块总结：关键指标与性能参数",
+          "anchor": "practice-recommendation-summary",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 5,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 推荐引擎关键指标\n\n| 指标 | 数值 | 说明 |\n|------|------|------|\n| 代码规模 | **6,300 行** | 推荐引擎 + PoolCurator + Delight |\n| 推荐评分维度 | **5 维** | relevance 0.30 + freshness 0.20 - fatigue 0.25 - monotony 0.15 + serendipity 0.20 |\n| 主题疲劳公式 | **count^1.5 / len * 5** | 饱和曲线，增长越快惩罚越重 |\n| 双轴疲劳 | **topic_key + topic_group** | 取 max，防止同话题不同风格绕过疲劳 |\n| 放大保护阈值 | **25%** | 24 小时内某主题占比 ≥25% 时 -0.35 |\n| 新鲜度半衰期 | **3 天** | Sigmoid 衰减 |\n| 不喜欢 UP 主 | **-0.20** | 4 维反馈调整之一 |\n| 不喜欢主题 | **-0.10** | 4 维反馈调整之一 |\n| 不喜欢 IP | **-0.07** | 4 维反馈调整之一 |\n| 喜欢主题 | **+0.05** | 4 维反馈调整之一 |\n| ToneProfile 维度 | **4 维** | density/warmth/playfulness/directness |\n| Delight 阈值 | **0.75** | 最低愉悦分才能推送 |\n| 主动推送间隔 | **120 秒** | 检查 delight 通知 |\n| 封面预取 | **小红书优先** | 旋转 token 优先预取 |\n\n### 设计亮点\n\n1. **5 维评分**：relevance/freshness/fatigue/monotony/serendipity 综合权衡\n2. **饱和疲劳曲线**：count^1.5 而非线性，快速增长的话题更快触发疲劳\n3. **双轴疲劳**：topic_key + topic_group 取 max，防止同话题不同风格绕过\n4. **放大保护**：24 小时内某主题占比过高时强制降权\n5. **4 维反馈调整**：UP 主/主题/IP/喜欢，精细化反馈响应\n6. **ToneProfile 语气控制**：4 维语气模型，推荐表达自适应用户偏好\n7. **降级模式**：LLM 不可用时使用缓存分数，确保推荐不中断"
+            }
+          ]
+        },
+        {
+          "title": "惊喜评分：Delight Scorer 与视觉加成",
+          "anchor": "practice-recommendation-delight",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`recommendation/delight.py` 是推荐引擎的核心创新。它试图量化和优化「惊喜感」——一种比「相关性」更难定义但更重要的用户体验指标。\n\n### Delight Score 的组成\n\n```\ndelight_score = 相关性评分 × 0.4 + 新颖度评分 × 0.3 + 深度匹配评分 × 0.2 + 视觉加成 × 0.1\n```\n\n| 组成 | 权重 | 含义 |\n|------|------|------|\n| 相关性评分 | 0.4 | 内容与用户兴趣的语义匹配度 |\n| 新颖度评分 | 0.3 | 内容视角/角度的新颖度（不是简单的发布时间） |\n| 深度匹配评分 | 0.2 | 是否触及用户深层心理需求 |\n| 视觉加成 | 0.1 | 封面图像与用户审美偏好的一致性 |\n\n### 为什么相关性只占 40%？\n\n如果相关性权重过高，推荐就会退化为「你已经看过的东西的翻版」。新颖度和深度匹配的权重确保了推荐不会陷入信息茧房——系统会优先推荐那些「你可能没想到但确实会喜欢」的内容。"
+            },
+            {
+              "type": "text",
+              "text": "### 视觉画像（Visual Profile）的校准过程\n\n`visual_profile.py` 中的封面加成不是拍脑袋设定的，而是基于真实数据校准的。代码中有 70+ 行注释记录了完整的校准过程：\n\n1. **数据采集**：收集 452 个真实 B站封面 + 用户实际的喜欢/不喜欢反馈\n2. **嵌入编码**：用 qwen3-vl-embedding (dim=1024) 将每个封面编码为 1024 维向量\n3. **质心计算**：将用户喜欢的封面向量聚类为正向质心（pos_centroids），不喜欢的聚类为负向质心（neg_centroids）\n4. **相似度分布统计**：101,926 对封面比较的余弦相似度分布（p5=0.195, p50=0.350, p95=0.479）\n5. **阈值设定**：floor=p50（约 50% 封面获得加成），ceil=p95（约 5% 达到上限）\n\n```python\n# 真实数据校准的阈值\n# qwen3-vl-embedding (dim=1024) — 452 real Bilibili covers\n# 101,926 pairs: p5=0.195, p50=0.350, p95=0.479\n_VISUAL_COVER_BONUS_MAX = 0.05  # 最大加成 5%\n# floor = p50 = 0.350（中位数以下不加）\n# ceil = p95 = 0.479（约 5% 封面达到上限）\n```\n\n**为什么最大加成只有 0.05？** 视觉偏好是一个辅助信号，不应该主导排序。0.05 足以在同分内容中做出区分，但不会让「封面好看但内容不匹配」的视频排到前面。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# recommendation/engine.py — 视觉封面加成的真实数据校准常量\n# 这不是拍脑袋的数字——每个阈值都来自真实生产数据的统计分析\n\n# CALIBRATION PROVENANCE: MEASURED 2026-07-27\n# 使用 dashscope qwen3-vl-embedding (dim=1024)\n#\n# 两轮校准（rule-3 documented）：\n#  1. GENERIC-ANCHOR pass（452 真实封面 vs 8 通用兴趣字符串）:\n#     p5=0.183  p50=0.302  p95=0.403\n#     → 淘汰了最初的 0.15/0.45 猜测值\n#  2. LIVE-ANCHOR pass（834 封面 vs 用户实际兴趣锚点）:\n#     p5=0.195  p50=0.350  p95=0.479\n#     → 最终常量来自 THIS pass（生产池的真实分布）\n\n_VISUAL_COVER_BONUS_MAX = 0.05   # 最大加成 5%（hard cap）\n_VISUAL_COVER_SIM_FLOOR = 0.35   # live p50：~50% 封面获得加成\n_VISUAL_COVER_SIM_CEIL = 0.48    # live p95：~5% 达到上限\n_VISUAL_COVER_MAX_ANCHORS = 8    # 每个封面比较的兴趣锚点上限\n_VISUAL_COVER_MIN_COVERAGE = 0.6 # 公平性守卫：至少 60% 候选有封面向量\n\n# 设计决策：为什么 floor 在 p50 而不是 p25？\n# 在 generic pass 的常量（0.30/0.40）下，71% 封面获得加成，\n# 28% 被 pin 在 0.05 上限 → 排名顶部坍缩为 0.88-rel + 0.05-cover\n# 的平局带。将 floor 提升到 p50 恢复了区分度。\n#\n# 公平性守卫：用户刚开启多模态时，旧池内容没有封面向量。\n# 只对已预热内容加 bonus 会系统性地偏向新发现内容。\n# 因此 coverage < 60% 时整批不加成，等后台 prewarm 补齐。",
+                "caption": "recommendation/engine.py — 视觉封面加成的真实数据校准：两轮统计 + 公平性守卫"
+              }
+            }
+          ]
+        },
+        {
+          "title": "PoolCurator 推荐侧评分：5 维权重与反馈调整",
+          "anchor": "practice-recommendation-curator",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "Discovery Engine 负责「找到什么」，但找到之后如何排序？这就是 `recommendation/curator.py` 中 `PoolCurator` 的职责。它不是简单地按 `relevance_score` 排序，而是综合考虑 5 个维度，计算一个**复合推荐分数**（rec_score）。\n\n### 5 维权重体系\n\n```python\n# recommendation/curator.py — ScoringWeights\n@dataclass(frozen=True)\nclass ScoringWeights:\n    relevance: float = 0.30      # 相关性\n    freshness: float = 0.20      # 新鲜度\n    topic_fatigue: float = 0.25  # 主题疲劳（惩罚项）\n    source_monotony: float = 0.15  # 来源单调（惩罚项）\n    serendipity: float = 0.20    # 意外性（奖励项）\n```\n\n**最终分数**：\n```\nrec_score = relevance * 0.30 + freshness * 0.20 - fatigue * 0.25 - monotony * 0.15 + serendipity * 0.20 + feedback_adjustment\n```\n\n| 维度 | 权重 | 含义 | 为什么这个权重？ |\n|------|------|------|------------------|\n| relevance | 0.30 | LLM 评估的匹配度 | 相关性重要但不是全部——纯按相关性排序会导致信息茧房 |\n| freshness | 0.20 | 内容入池时间衰减 | 半衰期 3 天：3 天前的内容分数减半 |\n| topic_fatigue | 0.25 | 同一主题出现次数 | **最高权重**——防止同一话题垄断推荐列表 |\n| source_monotony | 0.15 | 同一来源出现次数 | 防止 search 策略的高分内容碾压其他策略 |\n| serendipity | 0.20 | explore 策略的意外性奖励 | 只有 explore 策略的内容获得此奖励 |"
+            },
+            {
+              "type": "text",
+              "text": "### 主题疲劳：count^1.5 的饱和曲线\n\n主题疲劳不是简单的线性惩罚——它使用一个**饱和曲线**：\n\n```python\n# curator.py — _topic_fatigue()\ndef _topic_fatigue(topic, recent_topics):\n    count = sum(1 for t in recent_topics if t == topic)\n    if count == 0:\n        return 0.0\n    # 关键：count^1.5 / len * 5\n    return min(1.0, (count ** 1.5) / max(1, len(recent_topics)) * 5.0)\n```\n\n**曲线特征**（假设 `len(recent_topics) = 30`）：\n\n| 出现次数 | 疲劳值 | 说明 |\n|---------|--------|------|\n| 0 | 0.0 | 无惩罚 |\n| 1 | 0.17 | 轻微惩罚 |\n| 2 | 0.47 | 中等惩罚 |\n| 3 | 0.87 | 重度惩罚 |\n| ≥4 | 1.0 | 饱和（最大惩罚） |\n\n**为什么是 count^1.5 而不是 count？** 因为线性惩罚（count）太温和——一个高相关性的话题即使出现 3 次，线性惩罚也不足以让它输给新鲜话题。^1.5 的曲线让第 2 次、第 3 次出现的惩罚急剧增加，确保同一话题不会连续占据推荐列表。\n\n**双轴疲劳**：系统同时追踪 `topic_key`（细粒度）和 `topic_group`（粗粒度）两个轴。任一轴触发疲劳，候选内容都会被惩罚。这防止了「动漫杂谈」「动漫补番」「动漫解说」通过细粒度去重逃避粗粒度的「动漫」主题疲劳。"
+            },
+            {
+              "type": "text",
+              "text": "### 反馈调整：4 维反馈信号\n\n除了 5 维权重，PoolCurator 还会根据用户的显式反馈做**加性调整**（不在权重系统内）：\n\n```python\n# curator.py — _feedback_adjustment()\ndef _feedback_adjustment(item, feedback):\n    adj = 0.0\n    \n    # 1. 不喜欢的 UP 主\n    if item.up_mid in feedback.disliked_up_mids:\n        adj -= 0.20  # 重惩罚\n    \n    # 2. 不喜欢的主题\n    if candidate_topics & feedback.disliked_topic_keys:\n        adj -= 0.10  # 中等惩罚\n    \n    # 3. 喜欢的主题\n    if candidate_topics & feedback.liked_topic_keys:\n        adj += 0.05  # 轻微奖励\n    \n    # 4. 不喜欢的 IP（franchise_key）\n    if item_franchise in feedback.disliked_franchises:\n        adj -= 0.07  # 软惩罚——防止「原神」换皮再推\n    \n    return adj\n```\n\n| 反馈类型 | 调整值 | 设计理由 ||---------|--------|----------|\n| 不喜欢的 UP 主 | -0.20 | 最重的惩罚——用户明确不喜欢这个创作者 |\n| 不喜欢的主题 | -0.10 | 中等惩罚——用户不喜欢这个话题 |\n| 不喜欢的 IP | -0.07 | 软惩罚——防止「原神」换皮再推，但不彻底封杀 |\n| 喜欢的主题 | +0.05 | 轻微奖励——用户喜欢这个话题 |\n\n**为什么 IP 惩罚只有 0.07？** 因为 `franchise_key` 是基于标题的启发式匹配，可能误判。比如用户不喜欢「原神 3.8 版本前瞻」，但可能喜欢「原神 4.0 新地图」——0.07 的软惩罚让系统降低分数但不彻底封杀。"
+            },
+            {
+              "type": "text",
+              "text": "### 放大保护：防止某主题占比过高\n\nPoolCurator 还有一个精妙的设计——**放大保护**（amplification guard）：\n\n```python\n# curator.py — build_context()\ndef build_context(self, *, newly_confirmed_amplification_keys=None):\n    # 1. 统计最近 24 小时内，每个 topic_key/topic_group 出现的次数\n    recent_rows = self._database.get_recent_recommendation_signals_since(\n        since=datetime.now() - timedelta(hours=24)\n    )\n    \n    # 2. 如果某个 key 在最近 24 小时内占比 >= 25%\n    for key in normalized_amplification_keys:\n        matching = sum(1 for row in recent_rows if key in row_keys)\n        if matching / total_recent >= 0.25:\n            over_budget_keys.add(key)\n    \n    # 3. 在评分时，命中 over_budget_keys 的内容 -0.35\n    if candidate_amplification_keys(item) & context.over_budget_amplification_keys:\n        score -= 0.35\n```\n\n**为什么需要放大保护？** 因为主题疲劳是**逐条惩罚**（出现一次罚一次），但如果某个主题已经占了 30% 的推荐列表，逐条惩罚可能不够——需要一次性重罚 -0.35，让其他主题的内容有机会上位。\n\n**25% 阈值的由来**：这是一个经验值——如果某个主题在 24 小时内占了 25% 以上的推荐，用户会感觉「怎么全是这个话题」。放大保护确保推荐列表的多样性。"
+            },
+            {
+              "type": "text",
+              "text": "### 新鲜度：Sigmoid 衰减\n\n新鲜度使用 **Sigmoid 函数**（Sigmoid 是一种 S 形曲线函数，特点是中间变化快、两端变化平缓——就像人的记忆衰减：刚发生的事情印象最深，几天后快速遗忘，但很久以后又趋于稳定）而非线性衰减：\n\n```python\n# curator.py — _freshness_score()\ndef _freshness_score(timestamp_str, now):\n    age_days = (now - discovered).total_seconds() / 86400.0\n    # Sigmoid: 1 / (1 + exp((age - half_life) / 1.0))\n    return 1.0 / (1.0 + math.exp((age_days - 3.0) / 1.0))\n```\n\n**曲线特征**（半衰期 3 天）：\n\n| 入池时间 | 新鲜度分数 | 说明 ||---------|------------|------|\n| 0 天 | ~1.0 | 刚入池，最高新鲜度 |\n| 1 天 | ~0.88 | 轻微衰减 |\n| 3 天 | 0.5 | 半衰期：分数减半 |\n| 6 天 | ~0.12 | 大幅衰减 |\n| 9 天 | ~0.02 | 几乎无新鲜度 |\n\n**为什么用 Sigmoid 而不是线性？** 因为线性衰减在边界处不平滑——第 7 天的内容和第 6 天的内容差距太大。Sigmoid 在中间段（3 天左右）衰减最快，但在两端（0 天和 9 天+）衰减平缓，更符合人类对「新鲜」的感知。"
+            },
+            {
+              "type": "text",
+              "text": "### Embedding 增强的异步评分\n\nPoolCurator 还有一个 `score_candidates_async()` 方法，当 `embedding_service` 可用时，使用 **embedding 余弦相似度**（余弦相似度：衡量两段文本语义相近程度的指标，值域 0~1，值越大表示语义越相似）代替精确字符串匹配：\n\n```python\n# curator.py — score_candidates_async()\nasync def score_candidates_async(self, candidates, context, *, embedding_service=None):\n    # 1. 预嵌入最近的 topic_keys\n    for t in set(context.recent_topic_keys):\n        vec = await embedding_service.embed(t)\n        _recent_vecs[t] = vec\n    \n    # 2. 对每个候选，计算与最近 topics 的 embedding 相似度\n    topic_vec = await embedding_service.embed(item.topic_group)\n    sim_count = sum(\n        cosine_similarity(topic_vec, rv) >= embedding_service.similarity_threshold\n        for rv in _recent_vecs.values()\n    )\n    # 3. 用 sim_count 代替精确匹配的 count\n    fatigue = min(1.0, (sim_count ** 1.5) / max(1, len(recent_topics)) * 5.0)\n```\n\n**为什么需要 embedding 增强？** 因为精确字符串匹配无法识别语义相似的主题。比如「动漫杂谈」和「动漫解说」在字符串层面不同，但在 embedding 空间中非常接近。embedding 增强让疲劳计算更准确。\n\n**降级机制**：如果 `embedding_service` 不可用（如 embedding 模型未加载），自动降级到精确字符串匹配。"
+            }
+          ]
+        },
+        {
+          "title": "ToneProfile：推荐表达的自适应语气控制",
+          "anchor": "practice-recommendation-tone",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "推荐表达不是千篇一律的——`soul/tone.py` 中的 `ToneProfile` 根据用户画像动态调整推荐语的**语气风格**。它不是简单的模板替换，而是 4 个维度的连续调节。\n\n### 4 维语气模型\n\n```python\n# soul/tone.py — ToneProfile\nclass ToneProfile(TypedDict):\n    density: Density          # light | balanced | dense\n    warmth: Warmth            # cool | warm | companion\n    playfulness: Playfulness  # low | medium | high\n    directness: Directness    # soft | balanced | direct\n```\n\n| 维度 | 含义 | 触发条件 |\n|------|------|----------|\n| density | 信息密度 | `depth_preference <= 0.35` → light，`>= 0.72` → dense |\n| warmth | 温暖度 | 默认 warm，2+ 次 dislike → companion（更关怀） |\n| playfulness | 活泼度 | `max(openness, humor) >= 0.8` → high |\n| directness | 直接度 | 默认 balanced，2+ 次 dislike → soft（更委婉） |\n\n**为什么 dislike 后变成 companion + soft？** 因为用户连续不喜欢内容时，系统应该更关怀、更委婉——不是「你不喜欢这个」，而是「也许这个方向不太适合你，我们换个角度看看」。"
+            },
+            {
+              "type": "text",
+              "text": "### 语气推断逻辑\n\n```python\n# soul/tone.py — build_tone_profile()\ndef build_tone_profile(*, profile, preference_summary, recent_feedback):\n    tone = {'density': 'balanced', 'warmth': 'warm', 'playfulness': 'medium', 'directness': 'balanced'}\n    \n    # 1. 信息密度：根据深度偏好和时长偏好\n    if depth_preference <= 0.35 or preferred_duration == 'short':\n        tone['density'] = 'light'\n    elif depth_preference >= 0.72 or dense_keyword_hits >= 2:\n        tone['density'] = 'dense'\n    \n    # 2. 活泼度：取探索开放度和幽默偏好的最大值\n    playfulness_signal = max(openness, humor_preference)\n    if playfulness_signal >= 0.8:\n        tone['playfulness'] = 'high'\n    \n    # 3. 温暖度 + 直接度：根据最近负反馈\n    negative_feedback = sum(1 for f in recent_feedback if f['feedback_type'] == 'dislike')\n    if negative_feedback >= 2:\n        tone['warmth'] = 'companion'  # 更关怀\n        tone['directness'] = 'soft'    # 更委婉\n    \n    return tone\n```\n\n**密度关键词检测**：系统还会扫描用户的 `personality_portrait` + `core_traits` + `deep_needs`，检测是否包含「高信息密度」「想透」「复杂问题」等关键词。命中 2+ 个时，即使 `depth_preference` 不高，也会使用 dense 密度——因为用户的自我描述和行为可能不一致，自我描述优先。"
+            },
+            {
+              "type": "text",
+              "text": "### 推荐表达生成流程\n\n```python\n# recommendation/engine.py — _try_generate_expression()\nasync def _try_generate_expression(self, content, profile):\n    # 1. 推断语气画像\n    tone_profile = self._expression_tone_profile(profile, content)\n    \n    # 2. 用 embedding 相似度选择最相关的兴趣标签\n    interests = await self._select_relevant_interests(content, profile)\n    \n    # 3. 构建画像摘要（只包含相关兴趣，不是全部）\n    profile_summary = _recommendation_profile_summary(profile, interests=interests)\n    \n    # 4. 调用 LLM 生成表达\n    messages = build_recommendation_expression_prompt(\n        profile_summary=profile_summary,\n        content_summary={'title': ..., 'up_name': ..., 'style_key': ...},\n        tone_profile=tone_profile,\n        source_platform=content.source_platform,\n    )\n    response = await self._llm.complete_structured_task(...)\n    \n    # 5. 容错解析 + 字段验证\n    payload = extract_llm_json_object(response.content)\n    return _validated_expression_fields(payload, content_key=content.bvid)\n```\n\n**兴趣标签选择**：不是把所有兴趣标签都塞进 prompt——用 embedding 相似度选出与当前内容最相关的 3~5 个兴趣标签。比如推荐一个「机械键盘」视频时，只选「客制化键盘」「精密结构」「桌面美学」等相关兴趣，而不是「美食」「旅行」等无关兴趣。\n\n**降级机制**：如果 LLM 调用失败，系统使用 `_fallback_expression()` 生成模板化表达：\n\n```python\ndef _fallback_expression(content):\n    if style_key == 'deep_focus':\n        return f'《{title}》偏需要认真看进去，但会把结构和原理讲清楚。'\n    if style_key == 'quick_scan':\n        return f'《{title}》适合快速抓重点，先把发生了什么和关键变化过一遍。'\n```\n\n降级表达根据 `style_key` 选择不同的模板——深度内容、快速浏览、沉浸式观察等各有不同的推荐语风格。"
+            }
+          ]
+        },
+        {
+          "title": "多模态增强：关键帧与弹幕信号",
+          "anchor": "practice-recommendation-multimodal",
+          "groupTitle": "Recommendation Engine 推荐引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "除了封面图像，推荐引擎还会利用视频的关键帧和弹幕文本作为辅助排序信号。\n\n### 关键帧分析（Keyframe）\n\n当 `keyframe_enabled = True` 时，系统会：\n\n1. 从 B站 API 获取视频的**最多 12 帧关键帧**截图\n2. 用多模态嵌入模型将每帧编码为向量\n3. 计算关键帧向量与用户正向/负向视觉质心的相似度\n4. 得到一个 keyframe_score，范围与封面加成类似\n\n关键帧比封面更能反映视频的实际视觉风格——封面可能是精心设计的「标题党」，而关键帧是视频内容的真实截图。\n\n校准数据来自 99 个真实 B站候选视频的关键帧：\n- 关键帧的相似度分布比封面更紧凑（因为视频内容本身变化不大）\n- 阈值参数通过 `scripts/measure_visual_profile_geometry.py` 校准脚本动态计算\n\n### 弹幕信号（Danmaku）\n\n当 `danmaku_enabled = True` 时，系统会：\n\n1. 从 B站 API 获取视频的前 50 条弹幕（`danmaku_fetch_limit = 50`）\n2. 截取前 500 字符（`danmaku_max_chars = 500`）\n3. 将弹幕文本作为内容质量的辅助信号输入推荐表达生成\n\n弹幕能反映社区的实时反应——「卧槽太强了」「泪目」「收藏」这类弹幕暗示内容质量高。但弹幕数据量有限（最多 500 字符），只作为辅助信号，不会主导排序。"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

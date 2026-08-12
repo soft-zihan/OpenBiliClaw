@@ -1,0 +1,140 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：多平台数据源适配架构",
+          "anchor": "practice-sources-background",
+          "groupTitle": "Sources 平台数据源",
+          "difficulty": "beginner",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`sources/` 模块是 OpenBiliClaw 的「数据接入层」，负责从各平台获取用户行为数据和内容数据。它的核心设计目标是：**让上层代码不需要关心每个平台的差异**。\n\n### 统一协议设计\n\n`sources/protocol.py` 定义了所有平台 Adapter 必须实现的接口。每个 Adapter 封装了：\n- 如何获取用户行为数据（浏览历史、点赞、收藏等）\n- 如何搜索内容\n- 如何获取内容详情\n- 如何处理认证（Cookie / OAuth / API Key）\n\n`sources/registry.py` 负责注册和发现所有已配置的 Adapter，上层代码只需调用 Registry 的统一方法。"
+            },
+            {
+              "type": "table",
+              "table": {
+                "headers": [
+                  "平台",
+                  "Adapter 文件",
+                  "数据获取方式"
+                ],
+                "rows": [
+                  [
+                    "B站",
+                    "bilibili_adapter.py",
+                    "官方 API + Cookie 认证"
+                  ],
+                  [
+                    "小红书",
+                    "xiaohongshu_adapter.py",
+                    "Playwright 浏览器自动化"
+                  ]
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心流程：B站适配器的工作机制",
+          "anchor": "practice-sources-adapter",
+          "groupTitle": "Sources 平台数据源",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "B 站是 OpenBiliClaw 最早支持的平台，也是架构最成熟的一个。它的数据流展示了 Adapter 模式的完整实现。"
+            },
+            {
+              "type": "callchain",
+              "callchain": {
+                "endpoint": "BilibiliProducer.produce() → 获取用户行为数据",
+                "steps": [
+                  {
+                    "layer": "Producer",
+                    "filePath": "runtime/bilibili_producer.py",
+                    "functionName": "produce()",
+                    "explanation": "B站数据生产者。接收任务参数（如获取浏览历史、搜索关键词），调度底层 Adapter 执行具体操作。Producer 负责任务调度和结果归一化。",
+                    "keyPoint": "Producer 是任务调度层，不直接处理平台 API 调用"
+                  },
+                  {
+                    "layer": "Adapter",
+                    "filePath": "sources/bilibili_adapter.py",
+                    "functionName": "fetch_history() / search()",
+                    "explanation": "B站适配器封装了 bilibili-api-python 库的调用。它处理 Cookie 认证、请求频率控制、错误重试等平台特定逻辑。",
+                    "keyPoint": "Adapter 是平台差异的封装层——换了平台只需要换 Adapter，Producer 代码不变"
+                  },
+                  {
+                    "layer": "API Client",
+                    "filePath": "bilibili/api.py",
+                    "functionName": "BilibiliAPI",
+                    "explanation": "B站 API 客户端，封装了 bilibili-api-python 库。处理视频信息获取、用户收藏夹读取、搜索等核心 API 调用。",
+                    "keyPoint": "API Client 层是第三方库的封装——如果 bilibili-api-python 库升级，只需修改这一层"
+                  },
+                  {
+                    "layer": "Auth",
+                    "filePath": "bilibili/auth.py",
+                    "functionName": "BilibiliAuth",
+                    "explanation": "B站认证管理。处理 Cookie 的有效性检查、刷新、以及 QR 码登录流程。认证状态会持久化到 data/bilibili_cookie.json。",
+                    "keyPoint": "认证层独立于数据层——即使 Cookie 过期，数据获取层也能优雅降级"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "事件格式化：统一的 Event 模型",
+          "anchor": "practice-sources-event",
+          "groupTitle": "Sources 平台数据源",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`sources/event_format.py` 定义了统一的 Event 数据模型。无论来自哪个平台，用户行为数据都会被格式化为标准的 Event 结构，然后存入数据库。\n\n### 统一 Event 结构\n\n```python\n# 所有平台的事件都归一化为以下字段\n{\n    \"event_type\": \"view\",        # view/like/favorite/search/...\n    \"platform\": \"bilibili\",      # 平台标识\n    \"content_id\": \"BV1xx4x1y7z\", # 内容唯一标识\n    \"title\": \"视频标题\",\n    \"url\": \"https://...\",\n    \"timestamp\": \"2026-08-05T...\",\n    \"duration_seconds\": 120,     # 浏览时长\n    \"metadata\": {...}             # 平台特定元数据\n}\n```\n\n这种归一化设计让 Soul Engine 和 Discovery Engine 不需要关心数据来自哪个平台——它们只需要处理统一的 Event 结构。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# sources/event_normalizer.py — 统一 Event 模型伪代码\n\n@dataclass\nclass SourceEvent:\n    \"\"\"平台无关的统一事件格式\"\"\"\n    event_id: str           # 全局唯一: \"{platform}:{item_id}\"\n    platform: str           # \"bilibili\" | \"xhs\" | ...\n    item_type: str          # \"video\" | \"note\" | ...\n    title: str\n    author: str\n    url: str\n    published_at: datetime | None\n    ingested_at: datetime\n    raw_metadata: dict      # 平台原始数据\n    tags: list[str]         # 标准化标签\n\ndef normalize_event(platform: str, raw: dict) -> SourceEvent:\n    \"\"\"将平台原始数据转换为统一 Event\"\"\"\n    adapter = get_adapter(platform)\n    return adapter.to_event(raw)"
+              }
+            }
+          ]
+        },
+        {
+          "title": "小红书：浏览器自动化的挑战",
+          "anchor": "practice-sources-xhs",
+          "groupTitle": "Sources 平台数据源",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "小红书是最具挑战性的平台之一——它没有公开 API，且反爬机制非常严格。OpenBiliClaw 使用 Playwright 进行浏览器自动化来获取数据。\n\n### 技术挑战\n\n1. **登录态维护**：小红书需要扫码登录，登录态通过浏览器 Cookie 维护\n2. **反爬检测**：小红书会检测自动化浏览器的特征（如 `navigator.webdriver` 属性）\n3. **搜索限制**：未登录用户的搜索功能受限\n4. **内容加载**：小红书使用无限滚动加载内容，需要模拟滚动行为\n\n### 解决方案\n\n- `sources/xiaohongshu_adapter.py` 使用 Playwright 启动真实浏览器\n- `sources/browser.py` 提供了通用的浏览器管理功能\n- `sources/xhs_keyword_gen.py` 使用 LLM 生成小红书风格的搜索关键词（小红书的搜索习惯与其他平台不同）"
+            }
+          ]
+        },
+        {
+          "title": "Source Bootstrap：浏览器插件引导入队",
+          "anchor": "practice-sources-bootstrap",
+          "groupTitle": "Sources 平台数据源",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`sources/source_bootstrap.py` 是浏览器插件引导任务的**数据库边界入队层**。它将 CLI  historically 拥有的五个引导入队路径抽取到独立模块，让 runtime 代码可以在不导入 Typer/Rich CLI 表面的情况下入队已解析的数据库。\n\n### 核心设计\n\n1. **数据库边界**：helpers 只停在数据库边界——dispatch 触发和用户渲染属于调用方\n2. **可重入快速路径锁**：`SOURCE_BOOTSTRAP_DECISION_LOCK` 是跨 facade/进程的可重入锁\n3. **多表扫描**：admission 事务在多张表上执行活跃扫描和选择性插入\n\n### 关键常量\n\n```python\nINIT_BOOTSTRAP_MAX_ITEMS_PER_SCOPE = 300  # 每个范围的最大引导项\nDEFAULT_XHS_BOOTSTRAP_DEDUPE_HOURS = 6.0  # 去重窗口\n```"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

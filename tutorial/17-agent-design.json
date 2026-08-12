@@ -1,0 +1,167 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：LLM 全链路架构总览",
+          "anchor": "practice-agent-design-overview",
+          "groupTitle": "智能体设计专区",
+          "difficulty": "beginner",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "OpenBiliClaw 本质上是一个 **LLM-Native 智能体**——大模型不是系统的辅助工具，而是贯穿全链路的「大脑」。从行为理解到内容发现，从推荐表达到对话学习，每一个关键决策节点都由 LLM 驱动。\n\n### LLM 调用的全链路视图\n\n```\n行为事件 → [偏好分析] → [觉察分析] → [洞察分析] → [画像整合]\n                                    ↓\n                              [兴趣推测] → [回避推测]\n                                    ↓\n                              [关键词生成] → [内容搜索]\n                                    ↓\n                              [候选评分] → [准入判断]\n                                    ↓\n                              [推荐表达] → [惊喜评分]\n                                    ↓\n                              [对话理解] → [画像修正]\n```\n\n**每一个 `[ ]` 都是一次或多次 LLM 调用。** 整个系统在运行时，LLM 调用是最频繁、最昂贵、也最关键的操作。\n\n> 🎯 **面试关联**：「我设计的 Agent 是 LLM-Native 架构——15 个专用 Prompt 按温度分层：确定性判断用 0.1，结构化提取用 0.3，合理推断用 0.5，创造性发散用 0.7-0.8。每个决策节点都是一次 LLM 调用。」"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    subgraph 输入层\n        EVENTS[行为事件]\n        DIALOGUE[用户对话]\n        FEEDBACK[推荐反馈]\n    end\n\n    subgraph 理解层 LLM调用\n        PREF[偏好分析<br/>temperature=0.3]\n        AWARE[觉察分析<br/>temperature=0.5]\n        INSIGHT[洞察分析<br/>temperature=0.5]\n        SPEC[兴趣推测<br/>temperature=0.7]\n        AVOID[回避推测<br/>temperature=0.7]\n        DIAL[对话理解<br/>temperature=0.5]\n    end\n\n    subgraph 发现层 LLM调用\n        KW[关键词生成<br/>temperature=0.7]\n        EVAL[候选评分<br/>temperature=0.1]\n    end\n\n    subgraph 推荐层 LLM调用\n        EXPR[推荐表达<br/>temperature=0.8]\n        DELIGHT[惊喜评分<br/>temperature=0.3]\n    end\n\n    EVENTS --> PREF\n    PREF --> AWARE\n    AWARE --> INSIGHT\n    INSIGHT --> SPEC\n    INSIGHT --> AVOID\n    DIALOGUE --> DIAL\n    FEEDBACK --> PREF\n\n    PREF --> KW\n    SPEC --> KW\n    KW --> EVAL\n    EVAL --> EXPR\n    EVAL --> DELIGHT\n\n    EXPR --> USER[用户看到的推荐]",
+                "caption": "LLM 调用全链路：从输入到推荐输出"
+              }
+            }
+          ]
+        },
+        {
+          "title": "智能体设计的核心教训与面试要点",
+          "anchor": "practice-agent-design-lessons",
+          "groupTitle": "智能体设计专区",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "list",
+              "list": {
+                "style": "ordered",
+                "items": [
+                  {
+                    "content": "**温度不是魔法数字，而是任务容错空间的量化**。确定性任务用 0.1，创造性任务用 0.8，中间值对应不同的推断自由度。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**JSON Mode 的选择取决于下游消费者**。下游代码需要解析 → JSON Mode；用户的眼睛消费 → 自然语言。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**优先级调度是用户体验的关键**。用户可见的操作（推荐展示）必须优先于后台操作（画像更新），否则用户会感知到系统卡顿。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**模块级 LLM 路由是成本-质量平衡的杠杆**。不同任务适合不同模型——便宜模型做评分，好模型做表达，一刀切既浪费钱又牺牲质量。",
+                    "highlight": false
+                  },
+                  {
+                    "content": "**🎯 面试关联：成本意识是 Agent 工程师的核心能力**——「我的成本控制是三层体系——第一层：Prompt 分层缓存，稳态下 90% 的画像 Token 零消耗；第二层：批量处理，一次 LLM 调用处理 45 条候选评分；第三层：模块级 LLM 路由 + Reasoning 控制 + Token Diet，整体 Token 消耗降低 80%+。」",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**🎯 面试关联：错误分类决定系统鲁棒性**——「我设计了 4 层异常体系——`LLMRateLimitError`（限流 429，退避重试）、`LLMAuthError`（认证失败 401，直接终止）、`LLMTimeoutError`（超时，可重试）、`LLMFallbackError`（所有 Provider 都失败）。认证失败不重试——重试毫无意义，只会让 Provider 后台多出三条失败记录。限流检测支持中英文关键词（`余额不足`、`rate limit`），覆盖国内外 Provider。6 个 Provider 组成故障降级链，降级模式下已缓存推荐仍可展示，用户无感知。」",
+                    "highlight": true
+                  }
+                ]
+              }
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# 错误分类与故障降级（伪代码）\n\n# 1. 错误层级\nclass LLMProviderError:        # 基类\nclass LLMRateLimitError:       # 429/402 → 退避重试\nclass LLMAuthError:            # 401 → 直接终止，不重试\nclass LLMTimeoutError:         # 超时 → 可重试\nclass LLMFallbackError:        # 所有 Provider 都失败\n\n# 2. 限流检测：支持中英文关键词\nRATE_LIMIT_MARKERS = [\n    \"rate limit\", \"429\", \"402\", \"too many requests\",\n    \"resource exhausted\", \"quota exceeded\",\n    \"余额不足\", \"账户余额\",  # 国内 Provider\n]\n\n# 3. 故障分类函数\ndef classify_unavailability(error):\n    if is_rate_limit(error):    return \"rate_limited\"    # 退避重试\n    if no_provider(error):      return \"no_provider\"     # 初始化阶段\n    if model_not_found(error):  return \"model_not_found\"  # 模型未拉取\n    return None  # 真正错误，记录日志\n\n# 4. 降级策略：6 个 Provider 组成故障降级链\n# 推荐系统进入降级模式 → 已缓存的推荐仍可展示",
+                "caption": "错误分类与故障降级（伪代码）"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Prompt 工程体系：15 个专用 Prompt 的协同设计",
+          "anchor": "practice-agent-design-prompts",
+          "groupTitle": "智能体设计专区",
+          "difficulty": "advanced",
+          "estimatedMinutes": 15,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`llm/prompts.py`（2800+ 行）定义了 15 个专用 Prompt 构建函数，每个函数针对一个特定的 LLM 任务精心设计。这些 Prompt 并非独立存在，而是构成一个**协同体系**——上游 Prompt 的输出成为下游 Prompt 的输入。\n\n### 15 个 Prompt 的分层设计\n\n| 层级 | Prompt 函数 | 温度 | JSON模式 | 核心职责 |\n|------|-----------|------|---------|--------|\n| **理解层** | `build_preference_analysis_prompt` | 0.3 | ✅ | 从行为中提取兴趣标签 |\n| **理解层** | `build_awareness_prompt` | 0.5 | ✅ | 观察行为模式变化 |\n| **理解层** | `build_insight_prompt` | 0.5 | ✅ | 形成深层假设 |\n| **理解层** | `build_soul_profile_prompt` | 0.5 | ❌ | 生成自然语言人格描述 |\n| **理解层** | `build_socratic_dialogue_prompt` | 0.7 | ❌ | 苏格拉底式对话 |\n| **理解层** | `build_dialogue_insight_prompt` | 0.5 | ✅ | 从对话中提取洞察 |\n| **理解层** | `build_posture_gate_prompt` | 0.1 | ✅ | 判断信号质量 |\n| **理解层** | `build_role_delta_prompt` | 0.3 | ✅ | 角色变化检测 |\n| **理解层** | `build_values_delta_prompt` | 0.3 | ✅ | 价值观变化检测 |\n| **理解层** | `build_core_delta_prompt` | 0.3 | ✅ | 核心特质变化检测 |\n| **发现层** | `build_search_queries_prompt` | 0.7 | ✅ | 生成搜索关键词 |\n| **发现层** | `build_content_evaluation_prompt` | 0.1 | ✅ | 单内容评分 |\n| **发现层** | `build_batch_content_evaluation_prompt` | 0.1 | ✅ | 批量内容评分 |\n| **推荐层** | `build_recommendation_expression_prompt` | 0.8 | ❌ | 生成推荐理由 |\n| **推荐层** | `build_awareness_with_confusions_prompt` | 0.5 | ✅ | 带困惑的觉察分析 |"
+            },
+            {
+              "type": "text",
+              "text": "### 温度参数的选择哲学\n\n- **temperature=0.1**（极低）：PostureGate、ContentEvaluation → **确定性判断**，不能有创造性\n- **temperature=0.3**（低）：PreferenceAnalysis、Delta 检测 → **结构化提取**，允许少量变化\n- **temperature=0.5**（中）：Awareness、Insight → **合理推断**，有限度的创造性解读\n- **temperature=0.7-0.8**（高）：Speculator、KeywordGeneration、Expression → **创造性发散**\n\n**核心原则**：温度与任务的「容错空间」成正比。\n\n### JSON Mode 的精细控制\n\n- **JSON Mode ✅**：偏好分析、觉察分析、洞察分析、关键词生成、内容评分 → 后续代码解析\n- **纯文本 ❌**：灵魂画像、对话、推荐表达 → 直接展示给用户\n\n**关键决策**：推荐表达不用 JSON Mode，因为「像朋友一样推荐」需要自然流畅的语言。\n\n> 🎯 **面试关联**：「15 个 Prompt 按 4 层温度梯度设计，JSON Mode 的选择取决于下游消费者是代码还是人。」"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# 搜索词 Prompt：system 静态 + user 动态 分层设计\n\n# system prompt — 100% 静态，不含任何运行时变量\nsystem_prompt = \"\"\"\n  <task>为 B 站内容发现生成搜索关键词</task>\n  <rules>\n    1. 输出 JSON\n    2. 短词组合，不写长句\n    3. 25% 四象限分配...\n  </rules>\n\"\"\"\n\n# user prompt — 包含动态数据块（每次调用变化）\nuser_prompt = \"\"\"\n  <profile_summary>{裁剪后的画像 JSON}</profile_summary>\n  <pool_distribution_hints>{池分布 JSON}</pool_distribution_hints>\n\"\"\"\n\n# 为什么要这样分层？\n# 1. Provider 侧 Prompt Cache：静态 system prompt 命中缓存折扣 50%-90%\n# 2. 关注点分离：规则是「宪法」，画像是「数据」\n# 3. 可维护性：规则调整只改 system prompt",
+                "caption": "搜索词 Prompt 的静态/动态分层设计（伪代码）"
+              }
+            }
+          ]
+        },
+        {
+          "title": "LLM 调用成本优化三板斧：缓存、裁剪、批处理",
+          "anchor": "practice-agent-design-cost",
+          "groupTitle": "智能体设计专区",
+          "difficulty": "advanced",
+          "estimatedMinutes": 18,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "LLM 调用是 Agent 系统中最频繁、最昂贵的操作。OpenBiliClaw 通过**三板斧**实现系统性成本优化，整体 Token 消耗降低 80%+。\n\n### 第一板斧：Prompt 分层缓存\n\n`llm/prompt_cache.py` 将用户画像拆分为 5 个独立层，每层独立计算 SHA-256 摘要。未变化的层直接复用缓存文本，**零 Token 消耗**。\n\n| 层 | 内容 | 变化频率 | 缓存命中率 |\n|----|------|---------|----------|\n| core | MBTI、核心特质、价值观 | 极低 | 最高 |\n| life | 当前阶段、生活状态 | 低 | 高 |\n| interests | 兴趣标签 | 中 | 中 |\n| style | 认知风格、探索开放度 | 中 | 中 |\n| recent | 近期觉察、活跃洞察 | 高 | 低 |\n\n**设计哲学**：将最稳定的信息放在独立层，最大化缓存命中率；将最易变的信息也放在独立层，最小化缓存失效的影响范围。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# Prompt 分层缓存核心逻辑（伪代码）\n\nclass PromptLayerRenderCache:\n    def render_json_layer(name, payload):\n        digest = sha256(json_serialize(payload))  # 计算数据指纹\n        cached = lookup(name)\n\n        if cached and cached.digest == digest:\n            return cached.text  # 缓存命中！零 Token 消耗\n\n        # 缓存未命中，重新渲染并缓存\n        text = wrap_xml_tag(name, json_serialize(payload))\n        save_to_cache(name, digest, text)\n        return text\n\n# 画像拆分为 5 个独立缓存层\n# core(核心特质) | life(生活阶段) | interests(兴趣)\n# style(风格)    | recent(近期洞察)",
+                "caption": "Prompt 分层缓存核心逻辑（伪代码）"
+              }
+            },
+            {
+              "type": "text",
+              "text": "### 第二板斧：Token Diet — 输入视图裁剪\n\n认知循环的 Prompt 中充斥着**对 LLM 无用的内部字段**。Token Diet 通过 `compact-v1` 输入视图移除这些噪音：\n\n```\n移除的字段：browser_context, dom_snapshot, idempotency_key, page_html\n保留的字段：event_type, metadata.title（语义信号）\n```\n\n画像投影同样拆分为 `stable_soul`（稳定）+ `volatile_context`（易变），稳定部分跨调用复用。\n\n### 第三板斧：批量处理 + 智能调度\n\n| 策略 | 效果 |\n|------|------|\n| 批量内容评分 | 一次 LLM 调用处理 45 条候选 |\n| Reasoning 关闭 | 结构化任务不浪费推理 Token |\n| 对话批量结算 | 积累后再处理，减少调用频率 |\n| 小时桶缓存 | 同小时内评分共享时间戳 |"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# Token Diet Phase 3：加权洞察上下文选择（伪代码）\n\n# 五维度加权评分，选择最有价值的洞察作为 Prompt 上下文\nscore = 0.35 * relevance    # 与当前事件的词汇相似度\n      + 0.25 * recency      # 时间衰减（半衰期 40 条）\n      + 0.20 * verdict      # 是否已被用户确认/拒绝\n      + 0.15 * quality      # 置信度 + 证据数\n      + 0.05 * recurrence   # 特征签名重复次数\n\n# 四阶段填充（总上限 40 条）：\n# 1. Judged Reserve (8条)  — 最近已判断的假设，硬保留\n# 2. Recent Reserve (8条)  — 最新假设，硬保留\n# 3. Relevance Lane (16条) — 高相关性 + 多样性惩罚\n# 4. Importance Lane (8条) — 高置信度 + verdict\n\n# 近重复去重：相似度 >= 0.82 只保留一条",
+                "caption": "加权洞察上下文选择（伪代码）"
+              }
+            },
+            {
+              "type": "text",
+              "text": "### 韧性设计：优化失败不阻塞核心循环\n\n加权洞察上下文是一个**优化**，不是认知循环的所有者。如果加权选择器异常，`CognitionCycle` 捕获异常并降级到固定 bounded view。`compact-v1` 视图也通过 `input_view=\"legacy\"` 配置项实现向后兼容。\n\n> 🎯 **面试关联**：「我的成本控制不是单一技巧，而是三层体系——缓存（Prompt 分层渲染，稳态 90% 零消耗）+ 裁剪（Token Diet 移除无用字段）+ 批处理（45 条候选一次评分）。加上 Reasoning 控制和模块级路由，整体 Token 消耗降低 80%+。而且每个优化都有降级兜底——优化失败不阻塞核心循环。」"
+            }
+          ]
+        },
+        {
+          "title": "LLM 调用优先级与并发控制",
+          "anchor": "practice-agent-design-priority",
+          "groupTitle": "智能体设计专区",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "当系统负载较高时，LLM 调用槽位是稀缺资源。`LLMService` 实现了一套**基于调用方标签的优先级调度**。\n\n### 优先级映射表\n\n| 优先级 | 调用方标签 | 含义 |\n|--------|-----------|------|\n| 1（最高） | `recommendation.write_expression` | 用户正在等待推荐 |\n| 1（最高） | `discovery.evaluate_batch` | 当前发现批次评分 |\n| 2（中） | `soul` | 画像更新 |\n| 2（中） | `xhs` | 小红书数据抓取 |\n| 3（低） | 其他 | 后台任务 |\n\n**设计意图**：用户可见的推荐表达和当前批次候选评分永远优先于后台画像更新，确保用户不感知后台负载。\n\n### 最长前缀匹配\n\n- `\"recommendation.write_expression\"` 精确匹配 → 优先级 1\n- `\"soul.preference\"` 匹配前缀 `\"soul\"` → 优先级 2\n- `\"unknown.caller\"` 无匹配 → 默认优先级 3"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# LLM 调用优先级调度（伪代码）\n\n# 1. 优先级映射：最长前缀匹配\nPRIORITY_MAP = {\n    \"recommendation.write_expression\": 1,  # 用户等待中\n    \"discovery.evaluate_batch\":         1,  # 当前批次\n    \"soul\":                              2,  # 画像更新\n}\nDEFAULT_PRIORITY = 3  # 其他后台任务\n\ndef get_priority(caller_tag):\n    return longest_prefix_match(caller_tag, PRIORITY_MAP)\n\n# 2. Reasoning Effort 智能控制\n# 以下模块默认关闭 reasoning（节省推理 Token）：\nNO_REASONING_MODULES = [\n    \"discovery\",       # 关键词生成、内容评分\n    \"recommendation\",  # 推荐表达\n]\n# soul/profile 类任务保留 reasoning（需要深度推理）\n\n# 3. 模块级 LLM 路由覆盖\n# 每个模块可独立配置 provider / model\n# soul → DeepSeek（便宜推理强）\n# recommendation → Claude（文笔好）\n# evaluation → GPT-4（判断准确）",
+                "caption": "LLM 调用优先级调度与路由（伪代码）"
+              }
+            },
+            {
+              "type": "text",
+              "text": "### Reasoning Effort 的智能控制\n\n不同任务对 LLM 推理深度需求不同。`discovery`、`recommendation`、`sources` 等模块默认关闭 reasoning（thinking），因为开启 thinking 会消耗大量输出 Token 用于内部推理，对结构化任务毫无帮助。\n\n`soul/profile` 类任务（偏好分析、洞察分析）保留默认 reasoning，因为它们确实需要深度推理。\n\n### 模块级别的 LLM 路由覆盖\n\n每个模块可独立配置 `provider`、`model` 和 `chain`，实现精细化的成本-质量平衡：\n- DeepSeek 做偏好分析和画像构建（便宜、推理能力强）\n- Claude 做推荐表达（文笔更好、更像朋友）\n- GPT-4 做评估（判断更准确）\n\n> 🎯 **面试关联**：「我设计了基于调用方标签的优先级调度——用户可见操作优先级最高，后台任务最低。加上 Reasoning 智能控制和模块级 LLM 路由，确保用户体验不受后台负载影响。」"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

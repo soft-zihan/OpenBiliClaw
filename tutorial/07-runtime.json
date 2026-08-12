@@ -1,0 +1,144 @@
+{
+  "chapters": [
+    {
+      "id": "practice",
+      "title": "实战演练",
+      "sections": [
+        {
+          "title": "背景知识：Runtime 的定位与职责",
+          "anchor": "practice-runtime-background",
+          "groupTitle": "Runtime 运行时编排",
+          "difficulty": "beginner",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`runtime/` 模块是 OpenBiliClaw 的「操作系统」——它负责协调所有后台任务、管理生命周期、以及连接各模块。\n\n### 核心组件\n\n- **InitCoordinator**：引导初始化流程，新用户首次启动时的四阶段引导\n- **TaskRegistry**：后台任务注册与调度\n- **EventHub**：运行时事件广播（发布-订阅）\n- **Producers**：各平台数据生产者（B站/小红书/抖音/YouTube/X/知乎/Reddit）\n- **SourceIncrementalSync**：浏览器插件在线时的周期性账户引导调度器\n- **FeedbackScheduler**：用户反馈处理调度\n- **InspirationPipeline**：灵感发现流水线\n- **KeywordPlanner**：搜索关键词规划\n- **OllamaSupervisor**：本地 Ollama 服务管理\n- **EmbeddingSeed**：向量嵌入模型初始化\n- **PoolGate**：候选池门控（控制发现频率）\n- **Updater**：后端自动更新管理"
+            }
+          ]
+        },
+        {
+          "title": "核心流程：引导初始化（InitCoordinator）",
+          "anchor": "practice-runtime-init",
+          "groupTitle": "Runtime 运行时编排",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 12,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`runtime/init_coordinator.py` 实现了新用户首次启动的四阶段引导流程。这是用户从零到获得第一轮推荐的关键路径。\n\n### 四阶段引导\n\n```\n阶段1: 拉取数据    → 从已连接的平台获取用户行为数据\n阶段2: 分析偏好    → 使用 LLM 分析行为数据，提取初步偏好\n阶段3: 生成画像    → 整合分析结果，生成完整的 SoulProfile\n阶段4: 生成推荐    → 基于画像，生成首轮可用推荐\n```\n\n### 关键设计决策\n\n1. **单次飞行（Single-flight）**：同一时间只有一个 init 运行在运行，通过 `init_runs` 预留机制防止并发冲突\n2. **进度事件推送**：每个阶段的状态变化通过 EventHub 实时推送给前端\n3. **无预估时间**：代码注释明确说明「不发布每阶段预估时长」——因为不同平台、不同 Provider 的实际耗时差异巨大，错误的预估比没有预估更糟糕"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# runtime/init_coordinator.py — 四阶段定义\n_TOTAL_STAGES = 4\n_STAGE_LABELS = {\n    1: \"拉取数据\",\n    2: \"分析偏好\",\n    3: \"生成并保存完整画像\",\n    4: \"生成首轮可用推荐\",\n}\n\n# 关键设计：不发布预估时间\n# \"A predicted duration we cannot honour is worse than none:\n#  the real cost of a stage depends on the selected platforms,\n#  the collected history AND the provider's latency\"",
+                "caption": "runtime/init_coordinator.py — 引导初始化阶段定义",
+                "lineHighlights": [
+                  2,
+                  10
+                ]
+              }
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# runtime/init_coordinator.py — InitCoordinator 类核心\n\nclass InitCoordinator:\n    \"\"\"Lifecycle owner for one guided-init run at a time.\"\"\"\n\n    def __init__(self, ctx: Any) -> None:\n        self._ctx = ctx\n        self._current_task: asyncio.Task | None = None\n        self._current_run_id: str | None = None\n        self._enqueued_task_ids: set[str] = set()\n        # 序列化状态写入 + 事件发布，防止心跳与阶段进度交错\n        self._write_lock = asyncio.Lock()\n        self._seq = 0\n\n    # ── 惰性组件访问（配置热重载后仍有效）──\n    @property\n    def _db(self) -> Any:\n        return self._ctx.database\n\n    @property\n    def _event_hub(self) -> Any:\n        return getattr(self._ctx, \"event_hub\", None)\n\n    def try_start(self, run_id: str) -> bool:\n        \"\"\"预留新运行（单次飞行）。成功时播种阶段列表。\"\"\"\n        if not self._db.try_reserve_init_starting(run_id):\n            return False\n        self._enqueued_task_ids = set()\n        self._current_run_id = run_id\n        self._db.update_init_run(\n            run_id, stages_json=json.dumps(_initial_stages(), ensure_ascii=False)\n        )\n        return True",
+                "caption": "runtime/init_coordinator.py — InitCoordinator 类：单次飞行 + 惰性组件访问",
+                "lineHighlights": [
+                  3,
+                  10,
+                  16,
+                  23
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "核心流程：Runtime EventHub 事件广播",
+          "anchor": "practice-runtime-events",
+          "groupTitle": "Runtime 运行时编排",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`runtime/events.py` 实现了轻量级的发布-订阅事件总线。它只有 40 行代码，但却是连接后台任务和前端 UI 的关键桥梁。\n\n### 设计特点\n\n- **极简实现**：使用 `asyncio.Queue`（asyncio 是 Python 的异步编程框架，Queue 是其中的队列数据结构——就像一个排队通道，先来的事件先被处理，后来的排队等待）而非重量级消息队列\n- **非阻塞推送**：使用 `put_nowait()`（如果队列满了不等待，直接丢弃）避免发布者被慢速消费者阻塞\n- **自动清理**：队列满时自动丢弃事件（而非阻塞），确保后台任务不会因为前端断连而卡住\n- **交付感知**：`publish()` 返回 `bool` 表示是否有订阅者接收，允许调用方根据此信息做出决策（如「是否标记一次性事件为已消费」）"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# runtime/events.py — 极简事件总线（仅40行）\n@dataclass\nclass RuntimeEventHub:\n    _subscribers: set[asyncio.Queue] = field(default_factory=set)\n\n    async def publish(self, event: dict) -> bool:\n        delivered = False\n        for queue in list(self._subscribers):\n            with suppress(asyncio.QueueFull):\n                queue.put_nowait(dict(event))  # 非阻塞\n                delivered = True\n        return delivered  # 是否有订阅者接收",
+                "caption": "runtime/events.py — 极简事件总线实现",
+                "lineHighlights": [
+                  7,
+                  10
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "后台任务调度：TaskRegistry 与 APScheduler",
+          "anchor": "practice-runtime-tasks",
+          "groupTitle": "Runtime 运行时编排",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`runtime/task_registry.py` 管理所有后台定时任务。系统使用 APScheduler 作为调度引擎，支持：\n\n- **定时内容抓取**：各平台 Producer 按配置的频率执行内容抓取\n- **画像更新**：Soul Engine 定期根据新数据更新用户画像\n- **推荐生成**：Recommendation Engine 定期从候选池生成新推荐\n- **灵感探索**：InspirationPipeline 定期执行探索性搜索\n- **候选池维护**：清理过期内容、去重、容量控制\n- **自动更新检查**：Updater 定期检查新版本\n\n`runtime/source_policy.py` 控制每个平台的数据抓取策略——频率、每日配额、并发限制等。"
+            },
+            {
+              "type": "code",
+              "code": {
+                "language": "python",
+                "content": "# runtime/task_registry.py — 后台任务注册表（热重载安全）\n\nclass BackgroundTaskRegistry:\n    \"\"\"追踪 asyncio.create_task 的派发，使热重载可以取消它们。\n\n    运行时派生的每个 detached 任务（precompute、prewarm、\n    每事件触发器、刷新循环 tick）都应通过 track 而非裸\n    asyncio.create_task。cancel_all 时，注册表取消所有仍在运行\n    的任务，只等待配置的宽限期。\n    \"\"\"\n\n    def __init__(self) -> None:\n        self._tasks: dict[asyncio.Task, str] = {}\n\n    def track(self, name: str, coro) -> asyncio.Task:\n        \"\"\"包装 create_task，记住结果任务。任务完成时自动反注册。\"\"\"\n        task = asyncio.create_task(coro, name=name)\n        self._tasks[task] = name\n        # 任务完成时自动清理，防止注册表无限增长\n        task.add_done_callback(lambda t: self._tasks.pop(t, None))\n        return task\n\n    async def cancel_all(self, *, grace_seconds=1.5, exclude=frozenset()) -> int:\n        \"\"\"取消已追踪任务，等待 grace_seconds 进行清理。\n        exclude 中的任务名保持运行——用于配置热重载时不杀死\n        引导初始化任务（gui-init spec §5c）。\n        \"\"\"\n        tasks = [t for t, name in self._tasks.items() if name not in exclude]\n        # ... 取消并等待完成",
+                "caption": "runtime/task_registry.py — 后台任务注册表：热重载时安全取消",
+                "lineHighlights": [
+                  3,
+                  14,
+                  18,
+                  22
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "主动推送：delight 通知与封面预取",
+          "anchor": "practice-runtime-proactive-push",
+          "groupTitle": "Runtime 运行时编排",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "系统不只是被动等待用户打开推荐页——`_loop_proactive_push()` 每 120 秒主动检查是否有新的「惊喜推荐」可以推送。\n\n### 推送循环\n\n```python\n# runtime/refresh.py — _loop_proactive_push()\nasync def _loop_proactive_push(self):\n    while True:\n        # 1. 为未评分的池内容生成 delight 分数\n        await self.prepare_delight_candidates()\n        \n        # 2. 记录当前 delight 数量\n        delight_count_before = self._safe_count_delight_candidates()\n        \n        # 3. 发布 delight 和兴趣探测\n        await self._publish_delight_if_available()\n        await self._publish_probe_if_available()\n        \n        # 4. 检查是否有新的 delight\n        delight_count_after = self._safe_count_delight_candidates()\n        net_new = max(0, delight_count_after - delight_count_before)\n        \n        # 5. 如果有新的，发送事件通知前端\n        if net_new > 0:\n            await self._publish_event({\n                'type': 'delight.refreshed',\n                'count': net_new,\n                'message': f'刚发现 {net_new} 条新的惊喜推荐',\n            })\n        \n        await asyncio.sleep(120)  # 120 秒间隔\n```\n\n**为什么是 120 秒而不是 60 秒？** 因为推送不是流式内容——一旦当前批次已发送，几分钟内再推送只会造成通知疲劳。120 秒是用户体验和及时性的平衡点。"
+            },
+            {
+              "type": "text",
+              "text": "### 封面预取机制\n\n封面图片是推荐卡片的第一视觉元素——但如果封面加载失败，推荐卡片就失去了吸引力。`_prefetch_uncached_covers()` 解决了这个问题：\n\n```python\n# runtime/refresh.py — _prefetch_uncached_covers()\nasync def _prefetch_uncached_covers(self, *, scan=200, max_fetch=30):\n    # 1. 从数据库中获取最近可服务内容的封面 URL\n    candidates = self.database.iter_servable_cover_urls(recent_hours=48, limit=scan)\n    \n    # 2. 选择需要预取的目标（优先取小红书旋转 token URL）\n    targets = select_prefetch_targets(candidates, max_fetch=max_fetch)\n    \n    # 3. 并行下载并缓存到本地\n    for url in targets:\n        await self._cache_cover_image(url)\n```\n\n**为什么优先预取小红书封面？** 因为小红书的封面 URL 使用旋转 token——token 过期后 URL 就失效了。B站的封面 URL 是永久的。所以系统优先在 token 过期前缓存小红书封面。\n\n**封面缓存清理**：`_loop_image_cache_cleanup()` 定期清理已消费、未保存的内容封面。但小红书的旋转 token 封面会被保护——因为缓存的副本是唯一持久的来源。"
+            }
+          ]
+        },
+        {
+          "title": "SourceIncrementalSync：插件在线时的周期引导",
+          "anchor": "practice-runtime-incremental-sync",
+          "groupTitle": "Runtime 运行时编排",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "`runtime/source_incremental_sync.py` 是浏览器插件在线时的**周期性账户引导调度器**。它只负责运行时调度决策——通过数据库边界的 helpers（`sources/source_bootstrap.py`）入队，然后让调用方唤醒连接的插件。\n\n### 核心设计\n\n1. **不导入 CLI**：不执行 HTTP，不运行阻塞的收集器轮询\n2. **周期调度**：根据配置的增量同步小时间隔，周期性检查并触发引导\n3. **平台顺序**：按固定顺序处理平台（xhs → dy → yt → zhihu → reddit）\n\n### 任务规范\n\n```python\n_TASK_SPECS: dict[str, tuple[str, str, Callable]] = {\n    \"xhs\": (\"xhs_tasks\", \"bootstrap_profile\", enqueue_xhs_bootstrap),\n    \"dy\": (\"dy_tasks\", \"bootstrap_profile\", enqueue_dy_bootstrap),\n    \"yt\": (\"yt_tasks\", \"bootstrap_profile\", enqueue_yt_bootstrap),\n    \"zhihu\": (\"zhihu_tasks\", \"bootstrap_events\", enqueue_zhihu_bootstrap),\n    \"reddit\": (\"reddit_tasks\", \"bootstrap_events\", enqueue_reddit_bootstrap),\n}\n```\n\n### 与 SourceBootstrap 的关系\n\n- `source_bootstrap.py`：数据库边界入队层（纯数据操作）\n- `source_incremental_sync.py`：运行时调度层（周期性决策 + 插件唤醒）"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
