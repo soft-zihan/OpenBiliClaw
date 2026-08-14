@@ -129,7 +129,7 @@
           "blocks": [
             {
               "type": "text",
-              "text": "### CLI 入口：`cli.py`\n\n项目的 CLI 入口定义在 `pyproject.toml` 中：\n\n```toml\n[project.scripts]\nopenbiliclaw = \"openbiliclaw.cli:app\"\n```\n\n`cli.py` 是整个项目最长的文件（13,000+ 行），使用 **Typer** 框架构建 CLI。主要命令包括：\n\n- `openbiliclaw start` — 启动后端服务（监听 0.0.0.0:8420）\n- `openbiliclaw profile` — 查看用户画像（五层灵魂模型）\n- `openbiliclaw recommend` — 手动触发推荐（5 维评分）\n- `openbiliclaw config-show` — 查看当前配置\n- `openbiliclaw set-password` — 设置 API 密码（Rate Limiter：5 次失败/15 分钟锁定）"
+              "text": "### CLI 入口：`cli.py`\n\n项目的 CLI 入口定义在 `pyproject.toml` 中：\n\n```toml\n[project.scripts]\nopenbiliclaw = \"openbiliclaw.cli:app\"\n```\n\n`cli.py` 是整个项目最长的文件（13,000+ 行），使用 **Typer** 框架构建 CLI。主要命令包括：\n\n- `openbiliclaw start` — 启动后端服务（监听 0.0.0.0:8420）\n- `openbiliclaw profile` — 查看用户画像（五层灵魂模型）\n- `openbiliclaw recommend` — 手动触发推荐（5 维评分）\n- `openbiliclaw config-show` — 查看当前配置\n- `openbiliclaw set-password` — 设置 API 密码（Rate Limiter：5 次失败/15 分钟锁定）\n- `openbiliclaw embedding-cache-stats` — 查看嵌入缓存统计（行数、大小、命中率）\n- `openbiliclaw embedding-cache-clean` — 清理嵌入缓存（按容量/命名空间）\n- `openbiliclaw reinit` — 强制重新初始化（自动备份 DB + memory layers）"
             },
             {
               "type": "text",

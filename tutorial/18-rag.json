@@ -190,6 +190,19 @@
               "text": "### 聚类阈值校准\n\n代码中包含详细的校准记录：\n\n```pseudo\n// 数据驱动阈值校准（452 张真实 B 站封面，101,926 对比较）\n// 分布统计：p50=0.219  p75=0.295  p90=0.365  p95=0.409  p99=0.497\n//\n// 原始阈值 0.80 → 远超 p99，没有任何封面能合并\n// 最终阈值 0.50 → 刚好在 p99 之上，只有真正相似的才合并\nCLUSTER_THRESHOLD = 0.50\n```\n\n这体现了**数据驱动的阈值校准**——不是凭感觉设定阈值，而是基于真实数据分布来设定。\n\n### 封面加成在推荐中的应用\n\n在 `recommendation/engine.py` 中，封面视觉匹配被用作 delight_score 的微小加成（最大 0.05）：\n\n```pseudo\n// 封面视觉加成参数（可选、单向、加性）\nVISUAL_BONUS_MAX  = 0.05   // 硬上限：最多加 0.05\nVISUAL_SIM_FLOOR  = 0.35   // 低于 p50 → 不加分\nVISUAL_SIM_CEIL   = 0.48   // 达到 p95 → 满分\n```\n\n这个加成是**可选的、单向的、加性的**——不会因为封面不匹配而扣分，只在匹配时给予微小加成。这样设计确保了视觉偏好不会主导推荐排序，只是在同分内容中做出优雅的区分。"
             }
           ]
+        },
+        {
+          "title": "v0.3.201 更新：L2 缓存容量管理",
+          "anchor": "practice-rag-l2-capacity",
+          "groupTitle": "RAG 检索增强生成",
+          "difficulty": "advanced",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 新增：L2 缓存容量管理\n\nv0.3.201 为 `embedding_cache.db` 新增了**容量管理**机制，防止长期运行的发现/预热循环导致磁盘无限增长。\n\n```pseudo\n// 容量管理配置（config.toml）\n[llm.embedding]\ncache_max_bytes = 0            # 0 = 无限制（默认）\ncache_high_watermark = 0.9     # 触发清理的高水位\ncache_low_watermark = 0.7      # 清理目标低水位\n```\n\n**清理策略**：当缓存使用量超过 `high_watermark` 时，系统按以下优先级清理：\n\n1. **遗留命名空间**：切换嵌入模型后的旧缓存（provenance 不匹配）\n2. **非活跃命名空间**：长期未访问的缓存\n3. **最旧活跃行**：按 `last_accessed_at` 排序，清理最久的\n\n清理持续到使用量降至 `low_watermark` 以下。\n\n### 新增：二进制向量存储\n\n向量从 JSON 文本改为**紧凑二进制格式**（OBLV 格式）：\n\n```pseudo\n// OBLV 二进制格式（Little-Endian）\n// 4096 维向量：JSON 文本 ~90 KiB → 二进制 ~16 KiB（压缩 82%）\n\nHeader: magic(4) + version(2) + dtype(1) + reserved(1) + dimension(4)\nPayload: dimension * 4 bytes (float32)\n\n// 编码函数\nfunction encode_vector(vector):\n    header = pack('OBLV', version=1, dtype=FLOAT32, dimension=len(vector))\n    return header + struct.pack(f'<{len(vector)}f', *vector)\n\n// 解码函数（防御性：单行损坏不影响整体）\nfunction decode_vector(payload):\n    if not is_valid_header(payload): return None  // 降级为缓存 miss\n    return unpack_float32(payload)\n```\n\n**设计亮点**：\n- **自描述头**：reader 不依赖 SQLite 列类型推断格式\n- **版本化**：格式变更时递增 version，旧数据可迁移\n- **防御性解码**：单行损坏降级为 miss，不崩溃、不污染\n\n### 新增：访问频率限制\n\n```pseudo\n_ACCESS_BUMP_INTERVAL_SECONDS = 60.0  // 每行每分钟最多更新一次 last_accessed_at\n```\n\n避免每次缓存命中都写数据库——将读路径变为写路径。每行每分钟最多刷新一次访问时间戳，保持 LRU 淘汰顺序的同时限制写流量。"
+            }
+          ]
         }
       ]
     }

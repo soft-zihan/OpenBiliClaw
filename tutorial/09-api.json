@@ -159,6 +159,12 @@
                     "/api/llm/instances",
                     "GET",
                     "获取可用 LLM 实例列表"
+                  ],
+                  [
+                    "Agent Bridge",
+                    "/api/agent-bridge",
+                    "POST",
+                    "外部 Agent 桥接（预计算推荐 + 非阻塞反馈）"
                   ]
                 ]
               }
