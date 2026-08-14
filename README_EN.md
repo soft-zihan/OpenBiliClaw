@@ -197,11 +197,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.204 (2026-08-11)**
+📌 Latest: **v0.3.205 (2026-08-14)**
 
-- **Periodic account refresh is now opt-in** — upgrades no longer open platform tabs automatically; manual init, manual sync, and normal discovery are unchanged.
-- **Linux.do background discovery is more resilient** — transient content-script readiness races recover within the same task and tab instead of spawning repeated failures.
-- **V2EX Search works across all three keyword modes** — mixed, inspiration, and traditional keywords now reach formal search and the shared evaluation pipeline.
+- **Evidence-driven temporal admission** — the Evaluation Agent separates durable content, recent content, explicit deadlines, and event/version state; only high-confidence, text-grounded core evidence can hard-block an item, while uncertain cases are scheduled for review instead of being discarded by a universal age cutoff.
+- **Safe profile rebuilding** — desktop Web, the browser extension, and CLI can force reinitialization; OpenBiliClaw backs up the database and memory first, refreshes the old recommendation pool, and can optionally reset higher cognition layers.
+- **Smaller, maintainable embedding cache** — vectors use compact float32 BLOB storage, legacy databases migrate automatically, and new disk-budget, statistics, and safe-cleanup controls prevent unbounded growth.
+- **More client surfaces** — a new DeepSeek Harness client plugin and Flutter native mobile/desktop client entry points connect to the same local OpenBiliClaw backend.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -683,7 +684,7 @@ images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3,
 │ Legacy batch only when rollback flag=false     │
 │ Init barrier: profile commit → discover/evaluate/copy → ready │
 │ Bilibili supply: relevance search + budgeted 1×5 pubdate recent lane → shared evaluation │
-│ Evaluation: time-neutral relevance + Agent temporal class → high-confidence publication bonus │
+│ Evaluation: time-neutral relevance + grounded temporal evidence → eligible / review hold / expired + publication bonus │
 │ Temporal shadow: bonus vs no-bonus Top10/50/100 aggregates → class/source/age audit (no serving change) │
 │ Images: proxy fg + refresh prefetch → app-stable 4/3 lane → singleflight/atomic cache │
 │ Soul cognition: dual pending cooldown · one anchor · worker-only settlement · winner receipt · confusion FIFO · ledger · deep gate │
@@ -698,7 +699,7 @@ images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3,
 │ Bangumi public API → search/ranked/date producer → shared eval │
 │ V2EX public API/Feed → bounded Topic/Reply enrichment → five modes → shared eval │
 │ V2EX identity ladder: verified PAT > observed browser > accepted user; mismatch pauses only account projection │
-│ Eval clock: published_at + exact UTC evaluated_at → hourly cache invalidation │
+│ Temporal lifecycle: verbatim evidence + code-owned review clock → serve / temporal_review_hold / expired │
 │ Evaluator prefilter stays shadow → privacy-safe decision/raw-score join → read-only gate (no auto-enforce) │
 │ Named cognition views → task gate: compact only for awareness_confusions; others legacy │
 │ Token diet: per-offset preference packing; weighted recent/judged/relevant/important insight≤40 → full merge │
@@ -708,7 +709,7 @@ images: proxy foreground + refresh prefetch → app-stable lane (total 4 / bg 3,
 │ API raw-empty → wake under-share sources now → real progress resets / duplicate-only waves back off │
 │ Delight gate: formal copy/topic ready + seen_items guard → score/snapshot → UI × writes seen ledger │
 │ Inventory API/OpenClaw startup hook → recover/maintain → expose LLM │
-│ Reshuffle: current-card exclusion → PoolServeSnapshot/seen_items → short rec+shown write → one batch event │
+│ Reshuffle: current-card exclusion → hold/stale retirement + PoolServeSnapshot → final temporal recheck + atomic write │
 │ Platform scope (PC Web tabs only): source_platform → scoped candidates, no cross-platform floor → same rank/copy/persist │
 │ Platform inventory: platform-availability → same canonical servable set → total == Σ by_platform │
 │ Background maintenance: isolated worker → ≤50 rows/batch; unchanged skip / 10m sweep │
