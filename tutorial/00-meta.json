@@ -7,10 +7,10 @@
     "granularity": "standard",
     "generatedAt": "2026-08-14T10:00:00+08:00",
     "projectMetrics": {
-      "totalPythonLines": 195391,
+      "totalPythonLines": 199127,
       "pythonSourceFiles": 259,
-      "testFiles": 351,
-      "testLines": 227336,
+      "testFiles": 353,
+      "testLines": 231610,
       "extensionTSFiles": 178,
       "apiRoutes": 132,
       "databaseTables": 44,
@@ -19,14 +19,14 @@
       "sourcePlatforms": 11,
       "discoveryStrategies": 7,
       "moduleBreakdown": {
-        "soul": "27,674 行（画像引擎 + profile_views + event_prompt_views）",
-        "api": "26,500+ 行（API 层）",
-        "runtime": "25,247 行（运行时 + v2ex/weibo/linuxdo_producer）",
-        "storage": "21,029 行（存储层 + migration 数据迁移）",
-        "sources": "17,117 行（平台接入 + V2EX + 微博 + LinuxDo + source_bootstrap）",
-        "discovery": "15,400+ 行（发现引擎 + eval_payload/eval_reason + prefilter_audit + temporal）",
-        "llm": "12,400+ 行（LLM 集成 + evaluation_wire + embedding 服务）",
-        "recommendation": "6,500+ 行（推荐引擎 + exclusion 即时不喜欢过滤）",
+        "soul": "27,691 行（画像引擎 + profile_views + event_prompt_views）",
+        "api": "25,044 行（API 层 + agent-bridge）",
+        "runtime": "24,793 行（运行时 + v2ex/weibo/linuxdo_producer）",
+        "storage": "23,552 行（存储层 + temporal lifecycle + migration）",
+        "sources": "17,260 行（平台接入 + V2EX + 微博 + LinuxDo + source_bootstrap）",
+        "discovery": "13,499 行（发现引擎 + temporal v2 + eval_payload/eval_reason + prefilter_audit）",
+        "llm": "12,452 行（LLM 集成 + evaluation_wire + embedding 服务）",
+        "recommendation": "6,964 行（推荐引擎 + exclusion 即时不喜欢过滤）",
         "eval": "6,013 行（评估体系）"
       }
     }

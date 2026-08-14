@@ -278,6 +278,19 @@
           ]
         },
         {
+          "title": "v0.3.205 更新：时间评估 v2（Temporal Eligibility）",
+          "anchor": "practice-discovery-temporal-v2",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "v0.3.205 将时间评估从 v1 升级到 **v2**，增加了更严格的**时间生命周期管理**——不仅判断内容的时间分类，还判断内容是否仍然**有效**。\n\n### 核心概念：时间分类 + 有效性\n\n| 概念 | 含义 | 示例 |\n|------|------|------|\n| `temporal_class` | 时间分类 | breaking/current/versioned/evergreen/historical/unknown |\n| `temporal_validity_mode` | 有效性判定模式 | explicit_deadline/event_state/version_state/freshness_only |\n| `temporal_scope` | 影响范围 | core/hook/none |\n| `temporal_disposition` | 当前状态 | eligible/review_due/expired |\n\n### 时间分类策略\n\n```pseudo\n// 每个时间分类有独立的衰减曲线和准入 TTL\nTEMPORAL_CLASS_POLICIES = {\n    \"breaking\":  half_life=1d,   cap=0.85, ttl=3d    // 突发新闻：快速衰减，3天过期\n    \"current\":   half_life=14d,  cap=0.60, ttl=60d   // 当前热点：两周衰减，60天过期\n    \"versioned\": half_life=120d, cap=0.30            // 版本内容：缓慢衰减，无硬过期\n}\n```\n\n### 硬性过期条件（v2 新增）\n\nv2 的硬性过期需要**同时满足**：\n1. **完整时间证据**：`temporal_evidence_complete = true`\n2. **高置信度**：`temporal_confidence >= 0.80`（full confidence band）\n3. **核心值证据**：`temporal_scope = \"core\"`\n4. **明确截止日期**：`temporal_validity_mode = \"explicit_deadline\"`\n\n```pseudo\n// 硬性过期判定（v2）\nfunction is_hard_expired(content):\n    if not content.temporal_evidence_complete:\n        return false  // 证据不完整 → 不过期\n    if content.temporal_confidence < 0.80:\n        return false  // 置信度不足 → 不过期\n    if content.temporal_scope != \"core\":\n        return false  // 非核心值 → 不过期\n    if content.temporal_validity_mode != \"explicit_deadline\":\n        return false  // 无明确截止 → 不过期\n    return now() > content.temporal_valid_until\n```\n\n### 审查周期（Review Intervals）\n\n| 时间分类 | 审查周期 | 含义 |\n|----------|----------|------|\n| breaking | 1 天 | 突发新闻每天审查 |\n| current | 14 天 | 当前热点两周审查一次 |\n| versioned | 120 天 | 版本内容四个月审查一次 |\n\n### 存储层扩展\n\n`storage/database.py` 新增大量时间生命周期管理函数：\n\n- `requeue_discovery_candidate_for_temporal_review()`：将候选重新排队等待时间审查\n- `reject_temporally_stale_evaluated_candidates()`：拒绝时间过期的已评估候选\n- `retire_temporally_stale_pool_items()`：退役时间过期的池内容\n- `_transition_temporally_due_pool_items_on()`：转换到期池内容的状态"
+            }
+          ]
+        },
+        {
           "title": "模块总结：关键指标与设计亮点",
           "anchor": "practice-discovery-summary",
           "groupTitle": "Discovery Engine 发现引擎",

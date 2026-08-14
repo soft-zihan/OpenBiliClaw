@@ -123,6 +123,19 @@
               }
             }
           ]
+        },
+        {
+          "title": "v0.3.205 更新：时间生命周期管理",
+          "anchor": "practice-storage-temporal-lifecycle",
+          "groupTitle": "Storage 数据库层",
+          "difficulty": "advanced",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "v0.3.205 为 `storage/database.py` 新增了大量**时间生命周期管理**函数（+2,933 行），支持 discovery 模块的时间评估 v2。\n\n### 核心新增函数\n\n| 函数 | 职责 |\n|------|------|\n| `cache_content()` | 缓存内容时检查时间证据完整性 |\n| `requeue_discovery_candidate_for_temporal_review()` | 将候选重新排队等待时间审查 |\n| `reject_temporally_stale_evaluated_candidates()` | 拒绝时间过期的已评估候选 |\n| `retire_temporally_stale_pool_items()` | 退役时间过期的池内容 |\n| `_transition_temporally_due_pool_items_on()` | 转换到期池内容的状态 |\n\n### 时间证据存储\n\n```pseudo\n// 时间证据组（存储在 candidate_pool 表）\ntemporal_class: TEXT          // breaking/current/versioned/evergreen/historical/unknown\ntemporal_confidence: REAL     // 0.0 ~ 1.0\ntemporal_evidence: TEXT       // LLM 给出的分类理由\ntemporal_validity_mode: TEXT  // none/explicit_deadline/event_state/version_state/freshness_only\ntemporal_valid_until: TEXT    // ISO 8601 截止时间\ntemporal_scope: TEXT          // none/core/hook\ntemporal_disposition: TEXT    // eligible/review_due/expired\n```\n\n### 保守合并策略\n\n当新评估结果与已有缓存冲突时，采用**保守合并**：\n- 保留更高的置信度\n- 保留更完整的证据\n- 不降级已有的时间分类（除非新证据明确更权威）"
+            }
+          ]
         }
       ]
     }
