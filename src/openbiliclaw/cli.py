@@ -1238,6 +1238,51 @@ def _maybe_create_runtime_database_backup() -> None:
     maybe_create_scheduled_backup(db_path, _runtime_backup_dir())
 
 
+def _create_reinit_backup() -> Path | None:
+    """Snapshot the DB + memory layers before a forced re-init.
+
+    Force re-init overwrites the soul profile, retires the recommendation
+    pool, and — with ``reset_cognition`` — permanently clears the long-term
+    awareness / insight layers. A point-in-time backup is therefore taken
+    before the pipeline runs, so the user can restore what a rebuild would
+    otherwise replace or delete. It captures the cold SQLite copy (same
+    mechanism as the scheduled backup) plus every ``data/memory`` JSON layer
+    (soul / awareness / insight / preference / overrides / speculative …);
+    ``.lock`` files are skipped.
+
+    Best-effort: a failure logs WARNING and returns ``None`` — the re-init
+    still proceeds (the caller decides how prominently to surface this).
+    """
+    import shutil
+    from datetime import datetime
+
+    try:
+        db_path = _runtime_database_path()
+        if not db_path.exists():
+            return None
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_root = _runtime_backup_dir() / f"reinit-{stamp}"
+        backup_root.mkdir(parents=True, exist_ok=True)
+
+        from openbiliclaw.storage.maintenance import create_database_backup
+
+        create_database_backup(db_path, backup_root, timestamp=stamp)
+
+        memory_dir = db_path.parent / "memory"
+        if memory_dir.exists():
+            memory_backup = backup_root / "memory"
+            memory_backup.mkdir(parents=True, exist_ok=True)
+            for src in memory_dir.glob("*"):
+                if src.is_file() and not src.name.endswith(".lock"):
+                    shutil.copy2(src, memory_backup / src.name)
+        return backup_root
+    except Exception:
+        import logging
+
+        logging.getLogger("openbiliclaw.cli").warning("re-init backup failed", exc_info=True)
+        return None
+
+
 def _ensure_runtime_database_healthy() -> None:
     from openbiliclaw.storage.maintenance import check_database_integrity
 
@@ -5017,6 +5062,313 @@ def setup_embedding() -> None:
     _interactive_embedding_setup(config.llm.default_provider)
 
 
+def _build_embedding_service_or_none(config: Any) -> Any:
+    """Build the runtime ``EmbeddingService`` without chat providers.
+
+    Uses the same registry path the daemon uses, so the CLI protects exactly
+    the namespace production would protect. Returns ``None`` when embedding
+    is disabled or the service cannot be built.
+    """
+    emb = getattr(config, "llm", None)
+    provider = str(getattr(getattr(emb, "embedding", None), "provider", "") or "").strip()
+    if not provider:
+        return None
+    try:
+        from openbiliclaw.llm.base import LLMRegistry
+        from openbiliclaw.llm.registry import build_embedding_service
+
+        return build_embedding_service(config, LLMRegistry())
+    except Exception:
+        return None
+
+
+def _human_bytes(size: int) -> str:
+    value = float(max(0, int(size)))
+    if value < 1024:
+        return f"{int(value)} B"
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
+        value /= 1024
+        if value < 1024 or unit == "TiB":
+            return f"{value:.1f} {unit}"
+    return f"{value:.1f} TiB"
+
+
+def _embedding_cache_runtime(config: Any) -> tuple[Any, set[str]]:
+    """Return ``(cache, active_models)`` for the runtime L2 cache.
+
+    Active models come from the daemon's own service (its provenance
+    namespace) plus any models the cache has seen this process.
+    """
+    from openbiliclaw.llm.embedding import EmbeddingCache
+
+    cache_path = config.data_path / "embedding_cache.db"
+    service = _build_embedding_service_or_none(config)
+    if service is not None and service.l2_cache is not None:
+        cache = service.l2_cache
+        active_models = cache.active_models()
+        namespace = str(getattr(service, "cache_model_namespace", "") or "")
+        if namespace:
+            active_models.add(namespace)
+        return cache, active_models
+    cache = EmbeddingCache(cache_path)
+    cache.initialize()
+    return cache, set()
+
+
+@app.command("embedding-cache-stats")
+def embedding_cache_stats() -> None:
+    """查看 embedding L2 持久化缓存 (data/embedding_cache.db) 诊断信息。
+
+    显示行数、逻辑载荷、SQLite 主文件 / WAL / SHM 大小、legacy /
+    namespaced / active / inactive 分布、容量预算水位与最近维护记录，以及
+    每个 namespace 的行数与载荷。用于确认 provenance 隔离是否生效、旧
+    JSON 行是否已迁移为二进制、磁盘占用是否在预算内。命令会顺带执行与
+    daemon 相同的一次性运行时准备（legacy JSON → 二进制迁移，幂等）。
+    """
+    _print_page_title("Embedding L2 缓存诊断", "data/embedding_cache.db")
+    from openbiliclaw.config import load_config_with_diagnostics
+
+    config, _ = load_config_with_diagnostics()
+    cache_path = config.data_path / "embedding_cache.db"
+    if not cache_path.exists():
+        _print_status_panel(
+            "info",
+            "缓存不存在",
+            f"{cache_path} 尚未创建：embedding 未启用，或还没有任何向量写入。",
+        )
+        return
+
+    cache, _active = _embedding_cache_runtime(config)
+    stats = cache.stats(active_models=_active)
+    cap = stats["capacity"]
+    max_bytes = cap["max_bytes"]
+    cap_text = (
+        f"{_human_bytes(max_bytes)}（high={cap['high_watermark']:.0%} / "
+        f"low={cap['low_watermark']:.0%}，当前"
+        + ("已超高位" if cap["over_high_watermark"] else "未超高位")
+        + "）"
+        if max_bytes > 0
+        else "不设上限"
+    )
+    last_report = stats["last_maintenance_report"]
+    if last_report:
+        maint_text = (
+            f"已删除 {last_report.get('deleted_rows', 0):,} 行 / "
+            f"{_human_bytes(last_report.get('freed_bytes', 0))}"
+        )
+    else:
+        maint_text = "无记录"
+
+    overview = Table(show_header=False, box=None, title="缓存概况")
+    overview.add_column("指标", style="bold cyan", no_wrap=True)
+    overview.add_column("值")
+    for label, value in [
+        ("数据库文件", str(cache_path)),
+        ("总行数", f"{stats['total_rows']:,}"),
+        ("逻辑载荷", _human_bytes(stats["stored_bytes"])),
+        ("SQLite 主文件", _human_bytes(stats["file_bytes"])),
+        ("WAL / SHM", f"{_human_bytes(stats['wal_bytes'])} / {_human_bytes(stats['shm_bytes'])}"),
+        (
+            "legacy 行（无 namespace）",
+            f"{stats['legacy_rows']:,} 行 / {_human_bytes(stats['legacy_bytes'])}",
+        ),
+        (
+            "namespaced 行",
+            f"{stats['namespaced_rows']:,} 行 / {_human_bytes(stats['namespaced_bytes'])}",
+        ),
+        ("active 行", f"{stats['active_rows']:,} 行 / {_human_bytes(stats['active_bytes'])}"),
+        ("inactive 行", f"{stats['inactive_rows']:,} 行 / {_human_bytes(stats['inactive_bytes'])}"),
+        ("容量预算", cap_text),
+        ("最近维护", maint_text),
+    ]:
+        overview.add_row(label, value)
+    console.print(overview)
+    console.print()
+
+    if stats["namespaces"]:
+        ns_table = Table(show_header=True, header_style="bold cyan", title="Namespace 分布")
+        ns_table.add_column("model", no_wrap=True)
+        ns_table.add_column("namespace", no_wrap=True)
+        ns_table.add_column("行数", justify="right")
+        ns_table.add_column("载荷", justify="right")
+        ns_table.add_column("状态", justify="center")
+        for entry in stats["namespaces"]:
+            status = (
+                "active"
+                if entry["active"]
+                else "legacy"
+                if entry["namespace"] is None
+                else "inactive"
+            )
+            ns_table.add_row(
+                entry["model"],
+                entry["namespace"] or "-",
+                f"{entry['rows']:,}",
+                _human_bytes(entry["bytes"]),
+                status,
+            )
+        console.print(ns_table)
+        console.print()
+    if stats["legacy_rows"]:
+        _print_status_panel(
+            "warning",
+            "存在 legacy 行",
+            f"还有 {stats['legacy_rows']:,} 行旧 JSON 向量未迁移为二进制。"
+            "运行 `openbiliclaw embedding-cache-clean --apply` 可迁移并回收失效 namespace。",
+        )
+
+
+@app.command("embedding-cache-clean")
+def embedding_cache_clean(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="实际执行清理；默认 dry-run 只报告将删除的行数与字节",
+    ),
+    no_compact: bool = typer.Option(
+        False,
+        "--no-compact",
+        help="清理后跳过物理回收（WAL checkpoint + VACUUM INTO + 原子替换）",
+    ),
+    keep_legacy: bool = typer.Option(
+        False,
+        "--keep-legacy",
+        help="保留无 namespace 的 legacy 行（默认一并删除）",
+    ),
+    keep_model: str = typer.Option(
+        "",
+        "--keep-model",
+        help="额外保护一个 L2 model key（逗号分隔可传多个；"
+        "当前配置的 active namespace 默认受保护）",
+    ),
+    batch_size: int = typer.Option(
+        500,
+        "--batch-size",
+        min=1,
+        max=10000,
+        help="JSON→二进制迁移的每批行数（小批量提交，中断可续跑）",
+    ),
+) -> None:
+    """清理 embedding L2 缓存：迁移旧 JSON + 回收失效 namespace + 物理回收空间。
+
+    三个阶段（默认 dry-run 只报告；加 ``--apply`` 才执行）：
+    1. 把 legacy JSON 向量迁移为紧凑 float32 二进制（幂等、小批量、可中断续跑）；
+    2. 删除不在当前 active namespace 的行（默认含 legacy 行，``--keep-legacy`` 可保留）；
+    3. 执行 WAL checkpoint + VACUUM INTO 新文件 + integrity_check + 原子替换，
+       让磁盘占用实际下降（仅 DELETE 只进 freelist，主文件不会缩小）。
+    清理前请先停止 daemon，避免并发写入导致物理替换失败。
+    """
+    _print_page_title("Embedding L2 缓存清理", "data/embedding_cache.db")
+    from openbiliclaw.config import load_config_with_diagnostics
+
+    config, _ = load_config_with_diagnostics()
+    cache_path = config.data_path / "embedding_cache.db"
+    if not cache_path.exists():
+        _print_status_panel("info", "缓存不存在", f"{cache_path} 尚未创建，无需清理。")
+        return
+
+    cache, active_models = _embedding_cache_runtime(config)
+    extra_models = {part.strip() for part in keep_model.split(",") if part.strip()}
+    active_models = active_models | extra_models
+    pending = cache.pending_migration_rows()
+    preview = cache.delete_inactive(
+        active_models,
+        keep_legacy=keep_legacy,
+        dry_run=True,
+    )
+
+    if not apply:
+        migration_mb = pending * 92 / 1024 if pending else 0.0
+        _print_status_panel(
+            "info",
+            "dry-run 预览",
+            "未执行任何修改；加 --apply 才会真正清理。",
+        )
+        plan = Table(show_header=False, box=None, title="清理计划")
+        plan.add_column("阶段", style="bold cyan", no_wrap=True)
+        plan.add_column("将处理")
+        plan.add_row(
+            "1. JSON→二进制迁移",
+            f"{pending:,} 行 legacy JSON（约 {migration_mb:.0f} MiB 逻辑载荷；仅 --apply 时执行）",
+        )
+        plan.add_row(
+            "2. 删除失效行",
+            f"{preview['deleted_rows']:,} 行 / {_human_bytes(preview['freed_bytes'])}"
+            + ("" if active_models else "（未提供 active namespace，将删除全部非 keep-model 行）"),
+        )
+        plan.add_row(
+            "3. 物理回收",
+            "WAL checkpoint + VACUUM INTO + integrity_check + 原子替换"
+            if not no_compact
+            else "已跳过（--no-compact）",
+        )
+        console.print(plan)
+        console.print()
+        if active_models:
+            console.print(
+                "[dim]受保护的 active namespace:[/dim] "
+                + " ".join(f"[bold]{m}[/bold]" for m in sorted(active_models))
+            )
+        else:
+            console.print(
+                "[yellow]未识别到 active namespace（embedding 未启用或服务构建失败）；"
+                "请用 --keep-model 显式保护仍要使用的 model key。[/yellow]"
+            )
+        console.print()
+        _print_status_panel(
+            "warning",
+            "执行前请停止 daemon",
+            "物理替换需要独占文件；daemon 运行中执行可能失败或产生旧句柄。"
+            "缓存可重建，删除的行只是丢失冷数据，不影响推荐正确性。",
+        )
+        return
+
+    migration = cache.migrate_encoding(batch_size=batch_size)
+    deleted = cache.delete_inactive(active_models, keep_legacy=keep_legacy)
+    compact_report: dict[str, object] = {}
+    if not no_compact:
+        compact_report = cache.compact()
+
+    result = Table(show_header=False, box=None, title="清理结果")
+    result.add_column("阶段", style="bold cyan", no_wrap=True)
+    result.add_column("结果")
+    result.add_row(
+        "1. JSON→二进制迁移",
+        f"迁移 {migration.get('migrated', 0):,} 行，"
+        f"损坏跳过 {migration.get('skipped_corrupt', 0):,} 行"
+        f"，剩余 {migration.get('remaining', 0):,} 行",
+    )
+    result.add_row(
+        "2. 删除失效行",
+        f"删除 {deleted['deleted_rows']:,} 行 / 释放 {_human_bytes(deleted['freed_bytes'])}",
+    )
+    if compact_report:
+        if compact_report.get("ok"):
+            before_bytes = cast("int", compact_report.get("before_bytes") or 0)
+            after_bytes = cast("int", compact_report.get("after_bytes") or 0)
+            result.add_row(
+                "3. 物理回收",
+                f"主文件 {_human_bytes(before_bytes)} → "
+                f"{_human_bytes(after_bytes)}，integrity_check 通过",
+            )
+        else:
+            result.add_row(
+                "3. 物理回收",
+                f"失败：{compact_report.get('error') or 'unknown'}（原文件未改动）",
+            )
+    else:
+        result.add_row("3. 物理回收", "已跳过（--no-compact）")
+    console.print(result)
+    console.print()
+    if compact_report and not compact_report.get("ok"):
+        _print_status_panel(
+            "warning",
+            "物理回收失败",
+            "删除已完成但文件未缩小。请停止 daemon 后重试，或手工删除"
+            f" {cache_path}（缓存可重建）后再运行 `openbiliclaw embedding-cache-clean --apply`。",
+        )
+
+
 @app.command()
 def cost(
     days: int = typer.Option(7, "--days", min=1, max=90, help="统计窗口(天)"),
@@ -7698,6 +8050,8 @@ async def run_guided_init(
     profile_build_timeout_seconds: float = _INIT_PROFILE_BUILD_TIMEOUT_SECONDS,
     discovery_timeout_seconds: float = _INIT_DISCOVERY_TIMEOUT_SECONDS,
     collection_timeout_seconds: float = _INIT_COLLECTION_TIMEOUT_SECONDS,
+    purge_pool_callback: Callable[[], int] | None = None,
+    reset_cognition: bool = False,
 ) -> InitResult:
     """Shared async init pipeline (gui-init spec §1).
 
@@ -7726,6 +8080,17 @@ async def run_guided_init(
     lock). When ``coordinator``/``run_id`` are supplied, stage transitions
     and enqueued bootstrap task ids are reported for live GUI progress;
     run lifecycle (mark_running / complete / fail) stays with the caller.
+
+    Re-init switches (used by ``init --force`` / ``POST /api/init
+    {force:true}``): ``purge_pool_callback`` retires every active
+    recommendation pool row at stage-4 start so the fresh profile immediately
+    yields new recommendations (the caller injects it — CLI uses its runtime
+    database, the API wrapper uses the live daemon database; it runs
+    unconditionally, NOT via backfill signature sniffing, so a backfill that
+    omits the flag cannot silently skip the purge); ``reset_cognition`` clears
+    the long-term awareness / insight layers before stage 2 so old LLM
+    observations (e.g. from a previous account) do not leak into the new
+    profile build.
     """
 
     import logging
@@ -8641,6 +9006,21 @@ async def run_guided_init(
     await _stage_started(2)
     _print_section_title("2/4 分析偏好")
     console.print(f"  总信号量: [green]{len(events)}[/green] 条事件")
+    # Re-init with reset_cognition: retire the long-term awareness / insight
+    # layers BEFORE this run's analysis so old LLM observations (e.g. from a
+    # previous account) do not leak into the new profile build. This run's
+    # fresh drafts are persisted during stage 2 and become the new baseline.
+    if reset_cognition:
+        try:
+            for layer_name in ("awareness", "insight"):
+                layer = memory.get_layer(layer_name)
+                layer.data.clear()
+                layer.save()
+            console.print(
+                "  [dim]--reset-cognition：已清空旧认知观察与洞察层，本轮分析将重新生成。[/dim]"
+            )
+        except Exception:
+            logger.warning("reset_cognition layer clear failed", exc_info=True)
     profile_analysis_concurrency = _profile_analysis_concurrency(soul_engine)
     # Progress-aware deadline: the idle limit is what actually catches a wedged
     # gateway, so the absolute ceiling can stay generous for slow-but-healthy
@@ -8903,6 +9283,18 @@ async def run_guided_init(
     # ── Stage 4: only the committed full profile may drive discovery ──
     await _stage_started(4)
     _print_section_title("4/4 建立首轮可用内容池")
+    # Force re-init: retire the old recommendation pool BEFORE discovery so
+    # the fresh profile immediately yields new recommendations and the backfill
+    # cannot top out against stale rows. Best-effort: a purge failure must not
+    # fail the run (the backfill still tops up; new rows just mingle with old).
+    if purge_pool_callback is not None:
+        try:
+            purged = purge_pool_callback()
+            console.print(
+                f"  [dim]force 重初始化：已清空 {purged} 条旧推荐，按新画像重新发现。[/dim]"
+            )
+        except Exception:
+            logger.warning("re-init pool purge failed", exc_info=True)
 
     _stage4_live_done = 0
     _stage4_live_total = 4
@@ -9188,8 +9580,33 @@ def init(
         min=0,
         help="B 站关注 UP 初始化信号上限；默认 100，0 表示跳过关注。",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "已初始化时仍强制重新初始化：重新拉取所选平台数据、重建完整画像并"
+            "补足首轮发现池（现有事件、收藏与对话历史保留）。默认已初始化时"
+            "交互终端会二次确认。"
+        ),
+    ),
+    reset_cognition: bool = typer.Option(
+        False,
+        "--reset-cognition",
+        help=(
+            "重新初始化时同时清空旧认知观察与洞察层（换账号或大改兴趣时建议）。"
+            "仅配合 --force 有意义。"
+        ),
+    ),
+    no_backup: bool = typer.Option(
+        False,
+        "--no-backup",
+        help="force 重初始化前不创建备份（默认会自动备份数据库与画像/认知层到 data/backups/）。",
+    ),
 ) -> None:
-    """首次运行：拉取历史、生成画像并补足首轮发现池."""
+    """初始化或重新初始化：拉取历史、生成画像并补足首轮发现池.
+
+    已初始化时默认（交互终端）先二次确认，--force 跳过确认并直接按重新初始化执行。
+    """
     _prepare_init_runtime()
 
     # Snapshot the highest llm_usage row id seen at start so the
@@ -9212,7 +9629,47 @@ def init(
     memory = _build_memory_manager()
     soul_engine = _build_soul_engine()
 
-    _print_page_title("初始化 OpenBiliClaw", "首次运行引导")
+    # Re-init awareness: distinguish a first run from a deliberate rebuild so
+    # the copy is honest and the user isn't surprised by a re-pull. Interactive
+    # terminals get a confirmation when a profile already exists and --force
+    # was not passed; non-interactive (scripted) runs keep their historical
+    # behavior of just re-running (backwards compatibility).
+    profile_ready_check = getattr(soul_engine, "is_profile_ready", None)
+    already_initialized = bool(profile_ready_check() if callable(profile_ready_check) else False)
+    if already_initialized and not force and _is_interactive_terminal():
+        console.print("[yellow]检测到系统已初始化。[/yellow]")
+        console.print(
+            "  重新初始化会重新拉取所选平台数据、重建完整画像并补足首轮发现池；"
+            "现有事件、收藏与对话历史都会保留，但会消耗较多 AI 调用。"
+        )
+        if not typer.confirm(
+            "确认继续重新初始化？（开始前会自动创建备份到 data/backups/）", default=False
+        ):
+            console.print("[dim]已取消，未做任何改动。[/dim]")
+            raise typer.Exit(code=0)
+
+    if force or already_initialized:
+        _print_page_title("重新初始化 OpenBiliClaw", "重新拉取数据、重建画像并补足发现池")
+        if force:
+            console.print("[dim]  --force：跳过确认，按重新初始化执行。[/dim]")
+        console.print(
+            "[yellow]  本次为重新初始化：将重新拉取所选平台数据，并基于最新信号重建完整画像"
+            "（现有事件、收藏与对话历史保留）。[/yellow]"
+        )
+        console.print(
+            "[dim]  现有推荐池将按新画像重建：旧画像产出的推荐会被清空，"
+            "本轮基于新画像重新发现并生成首轮推荐。[/dim]"
+        )
+        if reset_cognition:
+            console.print(
+                "[dim]  --reset-cognition：将清空旧认知观察与洞察层，本轮分析重新生成。[/dim]"
+            )
+        if not no_backup:
+            console.print(
+                "[dim]  重初始化前将自动创建备份（数据库 + 画像/认知层）到 data/backups/。[/dim]"
+            )
+    else:
+        _print_page_title("初始化 OpenBiliClaw", "首次运行引导")
     stage1_label = (
         "拉 B 站历史 / 收藏 / 关注（时长看你的列表大小）"
         if include_bili
@@ -9539,6 +9996,17 @@ def init(
     # pipeline run_guided_init so the API can reuse them without nesting
     # event loops. The CLI injects the one-shot discovery backfill and
     # renders the summary below from the returned InitResult.
+    # Force re-init snapshots the DB + memory layers first so a rebuild can
+    # never silently destroy what the user cannot regenerate (soul profile,
+    # and with --reset-cognition the awareness/insight layers).
+    if force and not no_backup:
+        reinit_backup_path = _create_reinit_backup()
+        if reinit_backup_path is not None:
+            console.print(
+                f"  [green]已创建重初始化前备份：[/green][cyan]{reinit_backup_path}[/cyan]"
+            )
+        else:
+            console.print("  [yellow]备份创建失败（详见日志），重初始化仍将继续。[/yellow]")
     try:
         result = asyncio.run(
             run_guided_init(
@@ -9564,6 +10032,12 @@ def init(
                 include_weibo=include_weibo,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_run_init_discovery_backfill_async,
+                purge_pool_callback=(
+                    (lambda: _get_runtime_database().mark_pool_purged_by_reinit())
+                    if force
+                    else None
+                ),
+                reset_cognition=reset_cognition,
             )
         )
     except GuidedInitError as exc:

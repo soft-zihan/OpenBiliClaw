@@ -254,6 +254,55 @@ def test_ledger_command_is_registered(runner: CliRunner) -> None:
     assert "--write-point" in options
 
 
+def test_init_command_exposes_force_option(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["init", "--help"])
+    assert result.exit_code == 0
+    options = _registered_option_names("init")
+    assert "--force" in options
+    assert "--reset-cognition" in options
+    assert "--no-backup" in options
+    assert "重新初始化" in result.output
+
+
+def test_create_reinit_backup_snapshots_db_and_memory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Force re-init backup must capture the DB + memory layers, skip .lock."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    db_path = data_dir / "openbiliclaw.db"
+    db_path.write_bytes(b"fake-sqlite-bytes")
+    mem = data_dir / "memory"
+    mem.mkdir()
+    (mem / "soul.json").write_text('{"personality_portrait":"旧画像"}', encoding="utf-8")
+    (mem / "awareness.json").write_text('{"notes":[]}', encoding="utf-8")
+    (mem / "soul_profile.json.lock").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(cli_module, "_runtime_database_path", lambda: db_path)
+    monkeypatch.setattr(cli_module, "_runtime_backup_dir", lambda: data_dir / "backups")
+
+    backup_dir = cli_module._create_reinit_backup()
+    assert backup_dir is not None
+    assert backup_dir.name.startswith("reinit-")
+    db_copies = list(backup_dir.glob("*.db"))
+    assert len(db_copies) == 1
+    assert db_copies[0].read_bytes() == b"fake-sqlite-bytes"
+    mem_backup = backup_dir / "memory"
+    assert (mem_backup / "soul.json").exists()
+    assert (mem_backup / "awareness.json").exists()
+    assert not (mem_backup / "soul_profile.json.lock").exists()
+
+
+def test_create_reinit_backup_returns_none_without_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No DB yet → no backup (fresh install), returns None quietly."""
+    db_path = tmp_path / "nope.db"
+    monkeypatch.setattr(cli_module, "_runtime_database_path", lambda: db_path)
+    monkeypatch.setattr(cli_module, "_runtime_backup_dir", lambda: tmp_path / "backups")
+    assert cli_module._create_reinit_backup() is None
+
+
 def test_ledger_empty_shows_no_data(
     runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1809,6 +1858,95 @@ def test_config_show_displays_autostart_status(
     assert result.exit_code == 0
     assert "开机自启动" in result.stdout
     assert "已注册" in result.stdout
+
+
+def test_embedding_cache_stats_reports_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    from openbiliclaw.llm.embedding import EmbeddingCache
+
+    cfg = config_module.Config()
+    cfg.data_dir = str(tmp_path)
+    monkeypatch.setattr(
+        config_module,
+        "load_config_with_diagnostics",
+        lambda: (cfg, config_module.ConfigDiagnostics()),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    cache = EmbeddingCache(tmp_path / "embedding_cache.db")
+    cache.initialize()
+    cache.put("k1", [0.1, 0.2, 0.3], model="bge-m3#namespace=abc123")
+    cache.conn.execute(
+        "INSERT INTO embedding_cache (text_key, model, vector, encoding) "
+        "VALUES ('k2', 'bge-m3', ?, 0)",
+        ("[0.4, 0.5, 0.6]",),
+    )
+    cache.conn.commit()
+    cache.close()
+
+    result = runner.invoke(app, ["embedding-cache-stats"])
+
+    assert result.exit_code == 0, result.output
+    assert "Embedding L2 缓存诊断" in result.stdout
+    assert "bge-m3#namespace=abc123" in result.stdout
+    assert "legacy" in result.stdout
+    assert "总行数" in result.stdout
+
+
+def test_embedding_cache_clean_dry_run_then_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    from openbiliclaw.llm.embedding import EmbeddingCache
+
+    cfg = config_module.Config()
+    cfg.data_dir = str(tmp_path)
+    monkeypatch.setattr(
+        config_module,
+        "load_config_with_diagnostics",
+        lambda: (cfg, config_module.ConfigDiagnostics()),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    cache = EmbeddingCache(tmp_path / "embedding_cache.db")
+    cache.initialize()
+    cache.put("k1", [0.1, 0.2, 0.3], model="m#namespace=live")
+    cache.conn.execute(
+        "INSERT INTO embedding_cache (text_key, model, vector, encoding) "
+        "VALUES ('k2', 'bge-m3', ?, 0)",
+        ("[0.4, 0.5, 0.6]",),
+    )
+    cache.conn.commit()
+    cache.close()
+
+    # Default dry-run: reports what would change, touches nothing.
+    result = runner.invoke(app, ["embedding-cache-clean"])
+    assert result.exit_code == 0, result.output
+    assert "dry-run" in result.stdout
+    reopen = EmbeddingCache(tmp_path / "embedding_cache.db")
+    reopen.initialize()
+    assert reopen.count() == 2
+    reopen.close()
+
+    # --apply: migrates the JSON row, deletes the unprotected legacy row and
+    # physically compacts the file.
+    result = runner.invoke(
+        app, ["embedding-cache-clean", "--apply", "--keep-model", "m#namespace=live"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "迁移 1 行" in result.stdout
+    assert "删除 1 行" in result.stdout
+    reopen = EmbeddingCache(tmp_path / "embedding_cache.db")
+    reopen.initialize()
+    assert reopen.count() == 1
+    assert reopen.get("k1", model="m#namespace=live") is not None
+    row = reopen.conn.execute(
+        "SELECT encoding FROM embedding_cache WHERE text_key = 'k1'"
+    ).fetchone()
+    assert row[0] == 1
+    reopen.close()
 
 
 def test_run_api_server_prints_degraded_mode_panel(
@@ -3739,6 +3877,15 @@ def test_init_guides_missing_runtime_config_interactively(
         lambda: FakeBilibiliClient(),
         raising=False,
     )
+    # Hermetic: the ambient data dir may hold a real profile (e.g. after a
+    # local E2E run), which would otherwise flip init into the re-init
+    # confirm branch and consume an extra prompt.
+    monkeypatch.setattr(
+        cli_module,
+        "_build_soul_engine",
+        lambda: SimpleNamespace(is_profile_ready=lambda: False),
+        raising=False,
+    )
     monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
     monkeypatch.setattr(
         cli_module,
@@ -3842,6 +3989,15 @@ def test_init_guides_missing_auth_interactively(
         cli_module,
         "_build_bilibili_client",
         lambda: FakeBilibiliClient(),
+        raising=False,
+    )
+    # Hermetic: the ambient data dir may hold a real profile (e.g. after a
+    # local E2E run), which would otherwise flip init into the re-init
+    # confirm branch and consume an extra prompt.
+    monkeypatch.setattr(
+        cli_module,
+        "_build_soul_engine",
+        lambda: SimpleNamespace(is_profile_ready=lambda: False),
         raising=False,
     )
     monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)

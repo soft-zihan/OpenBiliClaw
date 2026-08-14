@@ -233,6 +233,7 @@ class SupportsEventDatabase(Protocol):
     def count_recommendations(self) -> int: ...
     def count_unread_recommendations(self) -> int: ...
     def count_pool_candidates(self, *, xhs_self_nickname: str = "") -> int: ...
+    def mark_pool_purged_by_reinit(self) -> int: ...
     def count_pool_readiness(self, *, xhs_self_nickname: str = "") -> dict[str, int]: ...
     def count_pool_candidates_by_source(self) -> dict[str, int]: ...
     def count_pool_available_candidates_by_source(
@@ -779,6 +780,11 @@ class ContinuousRefreshController:
         synchronous expression-copy drain and only succeeds once at least one
         canonical pool row is serviceable. Returns the total number of items
         discovered.
+
+        Force re-init purges the old pool via
+        ``run_guided_init(purge_pool_callback=...)`` at stage-4 start, before
+        this backfill is invoked — the purge is the pipeline's job so a
+        backfill implementation cannot silently skip it.
         """
 
         async def _report(done: int, total: int, note: str) -> None:

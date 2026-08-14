@@ -42,7 +42,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `tls-proxy enable [--san HOST_OR_IP]...` | 持久开启可选 LAN/self-managed HTTPS 入口 | ✅ |
 | `tls-proxy disable` | 持久关闭 TLS 入口（不删除证书） | ✅ |
 | `tls-proxy status` | 显示开关、端口、证书目录与 SAN | ✅ |
-| `init` | 首次初始化 | ✅ | stage 1 的 B 站收藏事件补上 `bvid` / url / `fav_time`（2026-07-26+）：此前收藏没有身份，进不了 `seen_items`，收藏过的视频会被当新内容推回；历史事件同时补 `content_id` / 完播秒数 / 时长 / 分区，供偏好分析 prompt 与画像抽样权重区分满播与划走；2026-07-27 起 `view` 也参与满意度判定，但**只判正向**：完播 ≥80% 且观看 ≥15 秒 → `positive/finished_watch`，低完播保持 `unknown` 不判负。收藏还会带上播放量 / 发布时间 / 简介（截 200 字，仅入库不进 prompt），并按 `attr` 丢弃失效视频——它们的标题字面是「已失效视频」，占真实样本 6%，原样进画像等于凭空造出一个兴趣。导入前按 `(事件类型, 内容身份, 时间戳)` 跳过账本已有行：重跑 init 曾让账本 56% 变成重复行；键含时间戳让真实重看仍能落地，无身份的行一律保留 |
+| `init` | 首次初始化 / `--force` 重新初始化 | ✅ | stage 1 的 B 站收藏事件补上 `bvid` / url / `fav_time`（2026-07-26+）：此前收藏没有身份，进不了 `seen_items`，收藏过的视频会被当新内容推回；历史事件同时补 `content_id` / 完播秒数 / 时长 / 分区，供偏好分析 prompt 与画像抽样权重区分满播与划走；2026-07-27 起 `view` 也参与满意度判定，但**只判正向**：完播 ≥80% 且观看 ≥15 秒 → `positive/finished_watch`，低完播保持 `unknown` 不判负。收藏还会带上播放量 / 发布时间 / 简介（截 200 字，仅入库不进 prompt），并按 `attr` 丢弃失效视频——它们的标题字面是「已失效视频」，占真实样本 6%，原样进画像等于凭空造出一个兴趣。导入前按 `(事件类型, 内容身份, 时间戳)` 跳过账本已有行：重跑 init 曾让账本 56% 变成重复行；键含时间戳让真实重看仍能落地，无身份的行一律保留 |
 | `fetch-douyin` | 单独触发抖音 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-xhs` | 单独触发小红书 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-youtube` | 单独触发 YouTube bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
@@ -54,6 +54,8 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `fetch-v2ex` | 只读验证 V2EX 发布、讨论、收藏主题、收藏 Node 四个 bootstrap scope（不写 memory、不调用 LLM） | ✅ |
 | `import-youtube <path>` | 从 Google Takeout 导入 YouTube 历史 / 订阅 / 点赞 | ✅ |
 | `setup-embedding` | 配置本地 Ollama 作为独立 embedding provider（可选） | ✅ |
+| `embedding-cache-stats` | 查看 embedding L2 持久化缓存诊断（行数、载荷、文件/WAL 大小、namespace 分布、容量水位、最近维护） | ✅ |
+| `embedding-cache-clean` | 清理 embedding L2 缓存：迁移旧 JSON 为二进制 + 回收失效 namespace + 物理回收磁盘（默认 dry-run；`--apply` 生效；`--keep-model` / `--keep-legacy` / `--no-compact` / `--batch-size`） | ✅ |
 | `recommend` | 查看推荐 | ✅ |
 | `feedback <id> <like\|dislike\|comment\|dismiss> [--request-id <stable-id>]` | 对推荐提交反馈；省略 ID 时生成并回显，跨命令重试必须复用 | ✅ |
 | `profile` | 查看用户画像 | ✅ |
@@ -668,7 +670,7 @@ $ openbiliclaw profile-consolidate --revert 20260612-031500   # 按 run_id 回�
 
 ### `openbiliclaw init`
 
-首次运行编排命令。会顺序执行：
+首次运行编排命令；已初始化后加 `--force` 即「重新初始化」（重新拉取所选平台数据、重建完整画像并补足首轮发现池，**现有事件、收藏与对话历史保留**；交互终端默认在检测到已初始化时先 y/N 二次确认，`--force` 跳过确认并把标题改为「重新初始化 OpenBiliClaw」，非交互终端保持直接重跑）。会顺序执行：
 
 1. 检查运行时 LLM 配置
 2. 检查 B 站认证（仅当包含 B 站来源时）
@@ -773,6 +775,9 @@ X (Twitter) 与其它平台不同：init 阶段**没有 bootstrap 导入任务**
 - `--bangumi-username <name>`：本次初始化读取的公开用户名，并在启用时写回配置；不提供时可回退 `[sources.bangumi].username`。
 - `--bangumi-token <token>`：Bangumi 个人令牌（推荐，自动识别当前用户并可读私密收藏）；不提供时可回退 `[sources.bangumi].access_token`。经 `/v0/me` 校验通过后写回配置；坏令牌当场拒绝。
 - `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`：覆盖 B 站收藏 / 关注初始化信号上限，默认各 `300`；`0` 表示跳过对应信号。
+- `--force`：已初始化时仍强制重新初始化。默认已初始化时，交互终端会先二次确认（`检测到系统已初始化` + y/N，默认 No，选 No 直接退出、不做任何改动）；`--force` 跳过确认，并按「重新初始化」语义执行——重新拉取所选平台数据、重建完整画像并补足首轮发现池，**现有事件、收藏与对话历史全部保留**，仅覆盖画像与推荐池（**旧推荐池会被清空并按新画像重建**）。非交互（脚本化）终端不弹确认，保持原有「直接重跑」行为（不传 `--force` 时也不清池）；只想基于已有事件重跑画像可优先用 `rebuild-profile`（不重新拉数据，更省）。
+- `--reset-cognition`：重新初始化时同时清空长期 awareness / insight 认知层（换账号或大改兴趣时建议），仅配合 `--force` 有意义；不清空时旧 LLM 观察继续作为新画像的构建上下文。
+- `--no-backup`：force 重初始化前跳过自动备份。默认 `init --force` 会先把数据库与 `data/memory/` 全部画像/认知层快照到 `data/backups/reinit-<时间戳>/`，再开始重建（覆盖的画像、`--reset-cognition` 删除的认知层因此可恢复）。
 - `OPENBILICLAW_NO_BILIBILI=1` / `OPENBILICLAW_NO_XHS=1` / `OPENBILICLAW_NO_DOUYIN=1` / `OPENBILICLAW_NO_YOUTUBE=1` / `OPENBILICLAW_NO_X=1` / `OPENBILICLAW_NO_ZHIHU=1` / `OPENBILICLAW_NO_REDDIT=1` / `OPENBILICLAW_NO_LINUXDO=1` / `OPENBILICLAW_NO_BANGUMI=1`：永久跳过对应源；作为持久禁用开关，它优先于同一来源的 `--yes-*`。
 - `OPENBILICLAW_XHS_BOOTSTRAP_DEDUPE_HOURS`：小红书 `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；设为 `0` 可关闭复用。
 - `OPENBILICLAW_DY_BOOTSTRAP_DEDUPE_HOURS` / `OPENBILICLAW_YT_BOOTSTRAP_DEDUPE_HOURS`：抖音 / YouTube `bootstrap_profile` 近期任务复用窗口，默认 `6` 小时；抖音已 `degraded` 的 completed 结果不参与复用；设为 `0` 可关闭复用。
@@ -922,6 +927,56 @@ CPU 即可跑，单次 embedding 约 100-200ms，配合后台 prewarmer 实际"�
   Windows: 从 https://ollama.com/download 下载安装包
   装好后重新运行本命令即可启用。
 ```
+
+### `openbiliclaw embedding-cache-stats`
+
+查看 embedding L2 持久化缓存（`data/embedding_cache.db`）的诊断信息，用于确认
+provenance namespace 隔离是否生效、旧 JSON 行是否已迁移为二进制、磁盘占用是否
+在预算内（issue #153）：
+
+```bash
+$ openbiliclaw embedding-cache-stats
+Embedding L2 缓存诊断 · data/embedding_cache.db
+缓存概况
+  数据库文件      …/data/embedding_cache.db
+  总行数          14,419
+  逻辑载荷        230.0 MiB
+  SQLite 主文件   221.0 MiB
+  WAL / SHM       12.0 MiB / 2.0 MiB
+  legacy 行（无 namespace）  0 行 / 0 B
+  namespaced 行   14,419 行 / 230.0 MiB
+  active 行       12,000 行 / 192.0 MiB
+  inactive 行     2,419 行 / 38.0 MiB
+  容量预算        不设上限
+  最近维护        已删除 5,000 行 / 701.8 MiB
+Namespace 分布
+  model  namespace  行数  载荷     状态
+  bge-m3#namespace=abc123  …  12,000  192.0 MiB  active
+  bge-m3#namespace=dead  …     2,419   38.0 MiB  inactive
+```
+
+命令会顺带执行与 daemon 相同的一次性运行时准备（legacy JSON → 二进制迁移，幂等）。
+
+### `openbiliclaw embedding-cache-clean`
+
+手动清理 embedding L2 缓存，默认 dry-run 只报告，加 `--apply` 才执行。三个阶段的
+目的对应 issue #153 的三条整改：
+
+1. **JSON → 二进制迁移**：把 `encoding=0` 的旧 JSON 向量迁移为紧凑 float32 BLOB
+   （幂等、小批量提交、中断可续跑；损坏行标记后跳过）。
+2. **回收失效 namespace**：删除不在当前 active namespace 的行（默认含 legacy 行；
+   `--keep-legacy` 保留 legacy 行，`--keep-model m1,m2` 额外保护指定 L2 model key）。
+3. **物理回收**：WAL checkpoint + `VACUUM INTO` 新文件 + `integrity_check` + 原子替换，
+   让磁盘占用实际下降（仅 `DELETE` 只会进 freelist，主文件不缩小）。
+
+```bash
+$ openbiliclaw embedding-cache-clean            # 预览：将迁移/删除哪些行
+$ openbiliclaw embedding-cache-clean --apply    # 执行迁移 + 删除 + 物理回收
+$ openbiliclaw embedding-cache-clean --apply --keep-legacy --no-compact
+```
+
+清理前请先停止 daemon：物理替换需要独占文件。缓存可重建，删除的只是冷数据，
+不影响推荐正确性。
 
 ### `openbiliclaw recommend`
 

@@ -5077,6 +5077,8 @@ def create_app(
         bangumi_username: str = "",
         bangumi_token: str = "",
         v2ex_username: str = "",
+        force: bool = False,
+        reset_cognition: bool = False,
     ) -> None:
         """Sole status/event writer for an API-launched guided init (gui-init
         §5f). Drives the shared ``run_guided_init`` through the coordinator and
@@ -5098,6 +5100,29 @@ def create_app(
         )
 
         coord = ctx.init_coordinator
+
+        def _purge_pool_for_reinit() -> int:
+            # Force re-init: retire every active pool row so the fresh profile
+            # immediately yields new recommendations. Called by the shared
+            # pipeline at stage-4 start (unconditionally, not via backfill
+            # signature sniffing — a backfill that omits the flag would
+            # otherwise silently skip the purge, see field report 2026-08-12).
+            return int(ctx.database.mark_pool_purged_by_reinit() or 0)
+
+        reinit_backup_dir: str | None = None
+        if force:
+            # Snapshot DB + memory layers before the rebuild so nothing the
+            # re-init replaces or deletes (soul profile, and with
+            # reset_cognition the awareness/insight layers) is unrecoverable.
+            try:
+                from openbiliclaw.cli import _create_reinit_backup
+
+                backup_path = _create_reinit_backup()
+                if backup_path is not None:
+                    reinit_backup_dir = str(backup_path)
+                    logger.info("re-init backup created at %s", reinit_backup_dir)
+            except Exception:
+                logger.warning("re-init backup failed in wrapper", exc_info=True)
 
         async def _api_discover_backfill(
             profile: Any,
@@ -5150,6 +5175,12 @@ def create_app(
                 discover_backfill=_api_discover_backfill,
                 coordinator=coord,
                 run_id=run_id,
+                # Force re-init retires the old recommendation pool so the
+                # fresh profile immediately yields new recommendations.
+                purge_pool_callback=_purge_pool_for_reinit if force else None,
+                # Optional: clear old awareness/insight observations (e.g.
+                # from a previous account) before the new profile build.
+                reset_cognition=reset_cognition,
             )
             discovery_partial = bool(result.discovery_error)
             dy_status = str(getattr(result, "dy_status", "skipped") or "skipped")
@@ -5271,6 +5302,12 @@ def create_app(
         except Exception:
             body = {}
         force = bool(body.get("force", False)) if isinstance(body, dict) else False
+        # Re-init option: clear the long-term awareness / insight layers before
+        # the rebuild so old observations (e.g. from a previous account) do not
+        # leak into the new profile. Only meaningful with ``force``.
+        reset_cognition = (
+            bool(body.get("reset_cognition", False)) if isinstance(body, dict) else False
+        )
         # Optional per-run platform selection from the extension checkboxes. A
         # list (even empty) is an explicit choice; absent → None = use all
         # enabled (CLI / legacy clients). Sent source keys are explicit opt-ins
@@ -5698,6 +5735,8 @@ def create_app(
                     effective_bangumi_username,
                     effective_bangumi_token,
                     effective_v2ex_username,
+                    force=force,
+                    reset_cognition=reset_cognition,
                 ),
             )
         else:
@@ -5708,6 +5747,8 @@ def create_app(
                     effective_bangumi_username,
                     effective_bangumi_token,
                     effective_v2ex_username,
+                    force=force,
+                    reset_cognition=reset_cognition,
                 )
             )
         coord.attach_task(run_id, task)
@@ -8643,6 +8684,59 @@ def create_app(
         payload.update(chat_reply_scheduler.status_payload())
         payload.update(image_fetch_coordinator.status_payload())
         return RuntimeStatusResponse(**payload)
+
+    @app.post("/api/agent-bridge")
+    async def agent_bridge(payload: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch one OpenClaw agent-bridge command against a warm adapter.
+
+        Mirrors the ``openbiliclaw.integrations.openclaw.cli`` JSON contract
+        (``{ok, data}`` / ``{ok: false, error, error_type}``) but runs inside
+        the warm serve-api process, so agent hosts avoid the per-call Python
+        import cold start.  The adapter is built lazily on first use and cached
+        on ``app.state``.
+        """
+        command = str(payload.get("command") or "").strip()
+        argv = payload.get("argv")
+        if not command:
+            return {"ok": False, "error": "missing command", "error_type": "validation_error"}
+        if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
+            return {
+                "ok": False,
+                "error": "argv must be an array of strings",
+                "error_type": "validation_error",
+            }
+
+        adapter = getattr(app.state, "agent_bridge_adapter", None)
+        if adapter is None:
+            lock = getattr(app.state, "agent_bridge_adapter_lock", None)
+            if lock is None:
+                lock = asyncio.Lock()
+                app.state.agent_bridge_adapter_lock = lock
+            async with lock:
+                adapter = getattr(app.state, "agent_bridge_adapter", None)
+                if adapter is None:
+                    from openbiliclaw.integrations.openclaw.bootstrap import (
+                        build_openclaw_adapter,
+                    )
+
+                    adapter = await asyncio.to_thread(build_openclaw_adapter)
+                    app.state.agent_bridge_adapter = adapter
+
+        from openbiliclaw.integrations.openclaw.cli import _build_parser, _run_command
+
+        parser = _build_parser()
+        try:
+            args = parser.parse_args([command, *argv])
+        except SystemExit:
+            return {
+                "ok": False,
+                "error": f"invalid command or arguments: {command!r}",
+                "error_type": "validation_error",
+            }
+        try:
+            return await _run_command(args, adapter)
+        except Exception as exc:  # pragma: no cover - defensive adapter boundary
+            return {"ok": False, "error": str(exc), "error_type": "operation_error"}
 
     def _backend_update_status() -> BackendUpdateStatusOut:
         get_update_status = getattr(ctx.auto_update_service, "get_update_status", None)
