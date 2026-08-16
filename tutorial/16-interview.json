@@ -337,6 +337,145 @@
           ]
         },
         {
+          "title": "RAG 本质与选型面试题",
+          "anchor": "interview-rag-essentials",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 20,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 选型",
+                "question": "RAG 和微调（Fine-tuning）有什么区别？什么时候用 RAG，什么时候用微调？OpenBiliClaw 为什么选择 RAG 而非微调？",
+                "answer": "**答案**：\n\n**核心区别**：\n\n| 维度 | RAG | 微调 |\n|------|-----|------|\n| 知识更新 | 实时更新（改索引即可） | 需要重新训练 |\n| 数据需求 | 不需要训练数据 | 需要大量标注数据 |\n| 成本 | 推理时检索成本 | 训练成本 + GPU |\n| 可解释性 | 可追溯到原文档 | 知识融入权重，难以追溯 |\n| 适用场景 | 事实性知识、私有数据、频繁更新 | 风格/格式/任务策略调整 |\n\n**OpenBiliClaw 选择 RAG 的原因**：\n1. **知识频繁更新**：用户兴趣每天变化，新内容不断入池，微调无法跟上\n2. **需要可追溯性**：推荐理由必须能解释「为什么推荐这条内容」，微调无法做到\n3. **无训练数据**：没有「用户画像→推荐内容」的标注数据集\n4. **本地优先**：微调需要 GPU，违背零配置本地运行的设计哲学\n5. **数据主权**：用户数据留在本地，不上传到训练管道\n\n**面试表述建议**：\n> 「RAG 适合知识密集型、需要实时更新和可追溯的场景；微调适合需要稳定改变模型行为（如语气、格式、任务策略）的场景。OpenBiliClaw 选择 RAG 因为用户兴趣频繁变化、推荐理由需要可解释、且没有标注训练数据。两者也可以组合：微调控制回答风格，RAG 提供事实依据。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 选型",
+                "question": "RAG 和长上下文模型谁更好？OpenBiliClaw 为什么不把所有用户画像和行为历史都塞进 LLM 的长上下文？",
+                "answer": "**答案**：\n\n**不是二选一，而是互补**：\n\n| 维度 | RAG | 长上下文 |\n|------|-----|----------|\n| 成本 | 检索成本 + 固定上下文 | 随 token 线性增长 |\n| 首 Token 延迟 | 检索完成后才开始 | 大量 token 导致延迟 |\n| 噪声 | 只放入相关证据 | 全部放入，噪声多 |\n| 权限控制 | 检索层过滤 | 难以在上下文层做 ACL |\n| 适用规模 | 大规模、频繁更新 | 小规模、单次使用 |\n\n**OpenBiliClaw 不全塞长上下文的原因**：\n1. **Token 成本**：完整画像 + 全部行为历史可能超过 10 万 token，每次推荐都消耗大量 API 费用\n2. **Prompt 分层缓存**：画像拆分为 5 层，稳态下 90% 被缓存——长上下文无法缓存\n3. **Lost in the Middle**：模型容易忽略上下文中间的关键信息\n4. **画像裁剪**：搜索词生成时故意丢弃 awareness/insights 等高变动字段，只保留稳定信号\n\n**关键洞察**：RAG 先筛选证据再放入上下文，长上下文是把所有材料直接放入。OpenBiliClaw 的 Prompt 分层缓存 + 加权洞察选择本质上是 RAG 思想在画像管理中的应用。\n\n**面试表述建议**：\n> 「长上下文适合小规模、单次使用场景；RAG 适合大规模、频繁更新、需要权限控制的场景。OpenBiliClaw 不全塞长上下文，因为 Token 成本太高、缓存失效、噪声太多。我们用 Prompt 分层缓存 + 加权洞察选择实现类似 RAG 的效果——只把最相关的画像层和 Top-40 假设放入上下文。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 选型",
+                "question": "为什么说 RAG 不是一个「向量库项目」？OpenBiliClaw 的 RAG 体系中向量库只占多大比例？",
+                "answer": "**答案**：\n\n**RAG 远不止向量库**：\n\n一个生产 RAG 系统至少包含：数据摄取、解析清洗、切分索引、嵌入计算、检索召回、重排精排、上下文构建、生成约束、引用校验、评测反馈。向量库只是其中一个组件。\n\n**OpenBiliClaw 的 RAG 组件占比**：\n\n| 组件 | 代码量 | 占比 |\n|------|--------|------|\n| 嵌入缓存（llm/embedding.py） | ~1,500 行 | 向量库相关 |\n| 候选池清理（soul/pool_purge.py） | ~400 行 | 检索 + LLM 精判 |\n| 画像去重（soul/consolidator.py） | ~1,500 行 | 聚类 + LLM 判断 |\n| 视觉偏好（recommendation/visual_profile.py） | ~800 行 | 多模态嵌入 |\n| 发现引擎（discovery/） | ~13,500 行 | 检索策略 + 评估 |\n| LLM 服务（llm/） | ~12,500 行 | 生成 + 精判 |\n\n向量库相关代码不到总 RAG 代码的 **5%**。95% 的工作在数据摄取、检索策略、LLM 精判、多样性控制和评测反馈。\n\n**面试表述建议**：\n> 「RAG 不是向量库项目。OpenBiliClaw 的 RAG 体系中，向量库只占不到 5% 的代码。核心挑战在于：检索策略（5 大策略并行）、LLM 精判（Recall→Precision 两阶段）、多样性控制（MMR + 三维压缩）、评测反馈（虚拟用户 + LLM-as-Judge）。向量库只是基础设施，真正的价值在检索策略和生成质量。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 选型",
+                "question": "一个 RAG 系统为什么会答错？请从数据层、检索层、上下文层、生成层四个维度分析，并结合 OpenBiliClaw 说明每层如何做故障定位。",
+                "answer": "**答案**：\n\n**四层故障分析**：\n\n| 层 | 失败原因 | OpenBiliClaw 的应对 |\n|----|---------|-------------------|\n| **数据层** | 内容元数据缺失、时间信息错误 | PostureGate 过滤低质量信号；temporal evidence 验证时间证据完整性 |\n| **检索层** | 嵌入阈值太高漏召回、搜索词质量差 | 低阈值 0.55 广撒网 + LLM 精判；25% 四象限搜索词保证多样性 |\n| **上下文层** | 画像 Token 太多挤占证据、假设太多噪声大 | Prompt 分层缓存（90% 命中）；加权洞察选择（441→40 条） |\n| **生成层** | LLM 幻觉、格式错误、不遵循指令 | 确定性评估线路（eval_payload）；JSON 四层容错解析；temperature 按任务选择 |\n\n**故障定位方法（Oracle 实验）**：\n1. 把正确内容直接放入上下文 → 仍答错 = 生成层问题\n2. 把正确内容放入后能答对 → 问题在检索层\n3. 用精确检索替换 ANN → 判断是表示问题还是参数问题\n4. 每一步只改一个变量，保存 trace 用于归因\n\n**面试表述建议**：\n> 「RAG 答错要分层定位：数据层检查内容质量，检索层检查召回集合，上下文层检查证据是否被正确使用，生成层检查模型输出。OpenBiliClaw 用 Oracle 实验定位瓶颈——把正确文档直接放入上下文，若仍答错是生成问题，若能答对是检索问题。每层有独立的质量指标和降级策略。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 选型",
+                "question": "什么时候不应该用 RAG？OpenBiliClaw 中有哪些场景是故意不用 RAG 而用其他方式解决的？",
+                "answer": "**答案**：\n\n**不适合 RAG 的场景**：\n\n1. **精确数据查询**：「账户余额是多少」应该调 API，不是语义检索\n2. **确定性规则**：「报销上限是多少」应该查配置表，不是让模型猜\n3. **行为改变**：「以后不要推荐游戏」应该写规则，不是靠 RAG 提醒\n4. **极小数据集**：知识量可以完整放入 Prompt 时，不需要索引\n\n**OpenBiliClaw 故意不用 RAG 的场景**：\n\n| 场景 | 解决方式 | 为什么不用 RAG |\n|------|---------|---------------|\n| 用户不喜欢某话题 | `disliked_topics` 硬过滤 | 确定性规则，不需要语义匹配 |\n| 内容准入阈值 | 固定阈值 0.60/0.58 | 确定性判断，不需要 LLM |\n| IP 限速保护 | 冷却计时器 + 风暴检测 | 确定性规则，保护账号安全 |\n| 画像核心层 | 直接读取 SoulProfile | 数据量小，不需要检索 |\n| 收藏同步 | 跨平台 ID 精确匹配 | 精确匹配，不需要语义 |\n\n**关键洞察**：RAG 是概率检索，适合开放式语义匹配。对于确定性规则、精确查询和行为控制，应该用代码强制而非语义检索。\n\n**面试表述建议**：\n> 「不是所有问题都需要 RAG。OpenBiliClaw 在确定性规则（准入阈值、IP 保护）、精确匹配（收藏同步、不喜欢过滤）和行为控制（回避策略）上故意不用 RAG，而是用代码强制。RAG 适合开放式语义匹配，精确查询和确定性规则应该用更简单可靠的方案。」"
+              }
+            }
+          ]
+        },
+        {
+          "title": "检索链路优化面试题：Rerank、混合检索与 Query Rewrite",
+          "anchor": "interview-retrieval-optimization",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 20,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "检索优化",
+                "question": "为什么很多系统要加 Rerank？OpenBiliClaw 的「LLM 精判」本质上是不是一种 Rerank？它与 Cross-Encoder Rerank 有什么区别？",
+                "answer": "**答案**：\n\n**为什么需要 Rerank**：\n\nBi-Encoder（嵌入召回）把 Query 和文档独立编码，交互能力有限。Rerank 对召回候选做精排，提升 Top 位精度。典型链路：先召回 20-100 条，再 Rerank 到 5-10 条。\n\n**OpenBiliClaw 的 LLM 精判 = Rerank**：\n\n```\n候选池清理（pool_purge）：\n  Stage 1: 嵌入召回（阈值 0.55）→ ~50 条候选\n  Stage 2: LLM 精判 → keep/purge 决策\n\n画像去重（consolidator）：\n  Stage 1: 嵌入聚类（阈值 0.85）→ ~100 簇\n  Stage 2: LLM 批量判断 → merge/keep 决策\n```\n\n**LLM Rerank vs Cross-Encoder Rerank**：\n\n| 维度 | Cross-Encoder | OpenBiliClaw LLM 精判 |\n|------|--------------|---------------------|\n| 输入 | Query + 文档对 | 画像 + 候选内容 |\n| 输出 | 相关性分数 | keep/purge 决策 + 理由 |\n| 成本 | 每对一次推理 | 45 条一次批量调用 |\n| 可解释性 | 只有分数 | 有中文理由 |\n| 延迟 | 毫秒级 | 秒级 |\n\n**关键差异**：OpenBiliClaw 的 LLM 精判不是简单的相关性排序，而是**基于用户画像的深度理解**——它不仅判断「是否相关」，还判断「是否匹配用户的深层偏好」。这是传统 Rerank 做不到的。\n\n**面试表述建议**：\n> 「OpenBiliClaw 的 LLM 精判本质上是一种 Rerank，但比传统 Cross-Encoder 更强：它不仅判断相关性，还基于用户画像做深度匹配。代价是延迟更高、成本更大，所以我们用批量处理（45 条/批）和 Prompt 缓存来控制成本。这是 RAG 系统中成本与精度的经典权衡。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "检索优化",
+                "question": "为什么 Dense Retrieval 很强了，生产里还要 Sparse？OpenBiliClaw 的检索体系中有没有混合检索的思想？",
+                "answer": "**答案**：\n\n**Dense vs Sparse 互补**：\n\n| 维度 | Dense（嵌入向量） | Sparse（关键词/BM25） |\n|------|------------------|---------------------|\n| 擅长 | 同义改写、语义匹配 | 精确术语、产品名、错误码 |\n| 弱点 | 实体名、版本号、专有词 | 语义理解、跨表述匹配 |\n| 成本 | 嵌入计算 + 向量存储 | 倒排索引，成本低 |\n\n**OpenBiliClaw 的混合检索思想**：\n\nOpenBiliClaw 虽然没有显式的 BM25 + Dense 混合，但在多处体现了混合检索思想：\n\n1. **硬匹配 + 嵌入召回**（pool_purge）：\n   - Stage 1: 字符串精确匹配 topic_key/topic_group（Sparse 思想）\n   - Stage 2: 嵌入召回 + LLM 精判（Dense 思想）\n\n2. **搜索词 + 相关推荐**（discovery）：\n   - search 策略：LLM 生成语义搜索词（Dense 思想）\n   - related_chain：从已推荐内容的相关推荐链延伸（类似 Sparse 的链接关系）\n\n3. **嵌入去重 + 前缀去重**（negative_exemplars）：\n   - 嵌入余弦相似度（Dense）\n   - 标题前 20 字符精确匹配（Sparse）\n\n**面试表述建议**：\n> 「生产 RAG 系统通常需要 Dense + Sparse 混合检索。OpenBiliClaw 虽然没有显式的 BM25，但在候选池清理中用硬匹配 + 嵌入召回实现类似效果，在发现引擎中用语义搜索 + 相关推荐链互补。核心思想是：精确匹配处理确定性场景，语义匹配处理开放性场景，两者互补而非替代。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "检索优化",
+                "question": "Query Rewrite 的目的是什么？有什么风险？OpenBiliClaw 的搜索词生成与 Query Rewrite 有什么关系？",
+                "answer": "**答案**：\n\n**Query Rewrite 的目的**：\n\n用户输入往往口语化、含指代或混合多个意图，直接检索会造成语义漂移。Query Rewrite 将用户输入转换为更适合搜索的查询表示。\n\n**OpenBiliClaw 的搜索词生成 = 高级 Query Rewrite**：\n\n```pseudo\n// 传统 Query Rewrite\n\"它支持吗\" → \"产品 X 3.2 版本是否兼容接口 Y\"\n\n// OpenBiliClaw 的搜索词生成\n用户画像（兴趣 + 风格 + 偏好）→ 5~10 个搜索词\n  25% 一级兴趣域\n  25% 二级细分角度\n  25% 猜测兴趣\n  25% 跨域探索\n```\n\n**Query Rewrite 的风险**：\n1. **丢失否定词**：「不要推荐游戏」改写成「游戏推荐」→ 语义反转\n2. **引入幻觉实体**：模型编造不存在的版本号或产品名\n3. **过度扩写**：改写结果偏离原始意图\n4. **主题污染**：把旧对话主题带入当前检索\n\n**OpenBiliClaw 的防护措施**：\n- **画像裁剪**：只保留稳定字段（interests、style），丢弃高变动字段（awareness、insights）\n- **缓存稳定性**：相同画像 + 相同池状态 → 复用搜索词，避免重复生成\n- **MMR 多样性**：避免搜索词集中在最强兴趣\n- **防风暴机制**：连续 3 次空结果 → 判定 IP 限流，立即中止\n\n**面试表述建议**：\n> 「Query Rewrite 将口语化输入转换为可检索的查询，但有丢失否定词、引入幻觉实体和过度扩写的风险。OpenBiliClaw 的搜索词生成是高级 Query Rewrite：基于用户画像生成 5~10 个搜索词，用 25% 四象限分配保证多样性，用画像裁剪丢弃高变动字段保证缓存稳定性，用 MMR 避免搜索方向同质化。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "检索优化",
+                "question": "元数据为什么对检索效果重要？OpenBiliClaw 的 provenance 追踪和 temporal 元数据如何保证检索质量？",
+                "answer": "**答案**：\n\n**元数据的作用**：\n\n元数据是与文本和向量共同存储的结构化字段，用于身份、血缘、过滤、版本、引用和治理。只存正文和向量会让权限、删除、回滚和排障都变得困难。\n\n**OpenBiliClaw 的元数据设计**：\n\n1. **Provenance 追踪**（嵌入缓存安全）：\n   ```pseudo\n   provenance = {provider, endpoint, model, dimension}\n   // 切换模型后 provenance 不匹配 → 旧缓存自动失效\n   // 防止不同维度向量混用导致灾难性结果\n   ```\n\n2. **Temporal 元数据**（时间生命周期管理）：\n   ```pseudo\n   temporal_class: breaking/current/versioned/evergreen/historical\n   temporal_confidence: 0.0 ~ 1.0\n   temporal_validity_mode: explicit_deadline/event_state/freshness_only\n   temporal_disposition: eligible/review_due/expired\n   // 硬性过期需要：完整证据 + 高置信度 + 核心值 + 明确截止\n   ```\n\n3. **五维标签体系**（内容溯源）：\n   - source_keyword_id：搜索词溯源\n   - topic_key/topic_group：话题去重\n   - style_key：观看模式多样性\n   - franchise_key：同 IP 去重\n   - source_strategy：策略来源追踪\n\n**面试表述建议**：\n> 「元数据是 RAG 系统的质量基石。OpenBiliClaw 用 provenance 追踪保证嵌入缓存安全（切换模型后旧缓存自动失效），用 temporal 元数据管理内容生命周期（硬性过期需要完整证据 + 高置信度），用五维标签体系实现内容溯源和多样性控制。没有这些元数据，系统无法做到精确去重、故障定位和质量回溯。」"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Memory 与 RAG 边界面试题",
+          "anchor": "interview-memory-rag-boundary",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 20,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "Memory vs RAG",
+                "question": "RAG 和 Memory 最本质的区别是什么？OpenBiliClaw 中哪些模块是 RAG，哪些是 Memory？",
+                "answer": "**答案**：\n\n**本质区别**：\n\n| 维度 | RAG | Memory |\n|------|-----|--------|\n| 目的 | 为当前查询找到相关证据 | 持久化状态，跨会话保持 |\n| 生命周期 | 查询结束即释放 | 长期保留，持续更新 |\n| 访问模式 | 按语义相似度检索 | 按时间/身份/状态直接读取 |\n| 数据性质 | 外部知识（文档、内容） | 内部状态（画像、偏好、历史） |\n\n**OpenBiliClaw 的 RAG vs Memory 划分**：\n\n| 模块 | 类型 | 理由 |\n|------|------|------|\n| embedding_cache.db | RAG | 语义检索缓存，可按需重建 |\n| pool_purge（候选池清理） | RAG | 嵌入召回 + LLM 精判 |\n| consolidator（画像去重） | RAG | 嵌入聚类 + LLM 判断 |\n| SoulProfile（用户画像） | Memory | 持久化状态，跨会话保持 |\n| events 表 | Memory | 行为历史，按时间序列存储 |\n| memory/*.json | Memory | 多层记忆，按身份直接读取 |\n| discovery_keywords | Memory | 搜索词状态机，按身份管理 |\n\n**关键洞察**：RAG 是「为查询找证据」，Memory 是「为系统保持状态」。OpenBiliClaw 的嵌入缓存、候选池清理是 RAG；用户画像、行为事件、多层记忆是 Memory。两者协同工作：Memory 提供用户状态，RAG 基于状态检索相关内容。\n\n**面试表述建议**：\n> 「RAG 和 Memory 的本质区别是：RAG 为当前查询找外部证据，查询结束即释放；Memory 为系统持久化内部状态，跨会话保持。OpenBiliClaw 的嵌入缓存和候选池清理是 RAG，用户画像和行为事件是 Memory。两者协同：Memory 提供用户状态，RAG 基于状态检索内容。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "Memory vs RAG",
+                "question": "会话历史（Session State）和长期记忆（Long-term Memory）有什么区别？为什么会话历史不等于长期记忆？OpenBiliClaw 如何区分两者？",
+                "answer": "**答案**：\n\n**核心区别**：\n\n| 维度 | 会话历史（Session State） | 长期记忆（Long-term Memory） |\n|------|------------------------|---------------------------|\n| 生命周期 | 单次会话 | 跨会话持久化 |\n| 内容 | 原始对话/事件序列 | 结构化知识（画像、偏好） |\n| 访问方式 | 按时间顺序 | 按语义/身份/状态 |\n| 更新频率 | 每次交互都追加 | 有写入策略（节流、批处理） |\n| 用途 | 上下文连贯性 | 用户理解、个性化 |\n\n**OpenBiliClaw 的区分**：\n\n```\n会话历史（Session State）：\n  - dialogue_turns 表：单次对话的原始记录\n  - 当前 SoulProfile 对象：内存中的活跃画像状态\n  - 生命周期 = 进程运行期间\n\n长期记忆（Long-term Memory）：\n  - events 表：行为事件持久化（跨会话）\n  - memory/*.json：多层记忆（awareness/insight/probe_history）\n  - profile_snapshots 表：画像版本化快照\n  - 生命周期 = 永久（除非用户清除）\n```\n\n**为什么会话历史 ≠ 长期记忆**：\n1. **会话历史是原始数据**：包含噪声、重复和临时上下文\n2. **长期记忆是提炼后的知识**：经过 CognitionCycle 加工的行为模式、兴趣标签、推测历史\n3. **会话历史会过期**：进程重启后丢失；长期记忆持久化在 SQLite 和 JSON 文件中\n4. **长期记忆有写入策略**：不是每轮都写，而是 12 小时或 30 事件触发一次 CognitionCycle\n\n**面试表述建议**：\n> 「会话历史是原始对话序列，生命周期限于单次会话；长期记忆是提炼后的结构化知识，跨会话持久化。OpenBiliClaw 用 dialogue_turns 存储会话历史，用 events 表和 memory/*.json 存储长期记忆。关键区别是写入策略：会话历史每轮都追加，长期记忆有节流机制（12 小时或 30 事件触发 CognitionCycle），避免频繁写入导致 LLM 成本失控。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "Memory vs RAG",
+                "question": "缓存是不是一种记忆？OpenBiliClaw 的 L1/L2 嵌入缓存和 MemoryLayer 有什么本质区别？",
+                "answer": "**答案**：\n\n**缓存是记忆的一种退化形式**：\n\n| 维度 | 缓存（Cache） | 记忆（Memory） |\n|------|--------------|---------------|\n| 目的 | 加速重复计算 | 保持状态和知识 |\n| 淘汰策略 | LRU/LFU（按访问频率） | 语义关联（按重要性） |\n| 可重建性 | 可丢失、可重建 | 不可丢失、不可重建 |\n| 内容 | 计算结果的副本 | 提炼后的知识 |\n\n**OpenBiliClaw 的缓存 vs 记忆**：\n\n```\n缓存（可丢失、可重建）：\n  - L1 内存缓存：OrderedDict LRU，进程重启即丢失\n  - L2 SQLite 缓存：embedding_cache.db，删除后重新计算即可\n  - 搜索词缓存：6 小时 TTL，画像变化即失效\n\n记忆（不可丢失、不可重建）：\n  - events 表：用户行为历史，丢失 = 丢失用户画像基础\n  - memory/*.json：认知循环产出，丢失 = 丢失深层理解\n  - profile_snapshots：画像版本化，丢失 = 丢失回溯能力\n```\n\n**关键区别**：缓存丢失后可以重建（重新计算嵌入），记忆丢失后无法重建（用户行为不可重放）。OpenBiliClaw 把嵌入存储在独立数据库（embedding_cache.db）中，正是为了区分「可重建的缓存」和「不可重建的业务数据」。\n\n**面试表述建议**：\n> 「缓存是记忆的退化形式——目的是加速而非保持。OpenBiliClaw 严格区分两者：嵌入缓存（L1/L2）可丢失可重建，存储在独立数据库；用户画像和行为事件不可丢失不可重建，存储在主数据库和 memory 文件中。这种区分决定了备份策略（嵌入缓存可跳过）、淘汰策略（LRU vs 语义关联）和容错设计（缓存 miss 降级 vs 记忆丢失灾难）。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "Memory vs RAG",
+                "question": "为什么 Memory 需要写入策略？OpenBiliClaw 的 CognitionCycle 为什么不是每轮都写？如果每轮都写会有什么问题？",
+                "answer": "**答案**：\n\n**为什么需要写入策略**：\n\nMemory 不是「越多越好」——频繁写入会导致：\n1. **LLM 成本失控**：每次写入可能触发 LLM 调用（Awareness/Insight 分析）\n2. **噪声积累**：少量事件不足以形成有意义的模式，频繁写入产生大量低质量假设\n3. **状态不稳定**：画像频繁变化导致推荐方向摇摆，用户体验差\n4. **资源竞争**：写入与读取竞争 LLM 槽位，影响用户可见操作的响应速度\n\n**OpenBiliClaw 的写入策略**：\n\n```pseudo\n// CognitionCycle 触发条件（二选一）\nif time_since_last_cycle >= 12 hours:   // 时间节流\n    trigger_cognition_cycle()\nif pending_events >= 30:                // 事件累积\n    trigger_cognition_cycle()\n\n// 有界批处理\nbatch_size = 300     // 每批处理 300 事件\nmax_events = 900     // 单次上限 900 事件\nmax_retries = 1      // 只重试一次\n\n// 写入后持久化\nwatermark += batch_size  // 游标前进，崩溃可恢复\n```\n\n**如果每轮都写的问题**：\n- 用户每看 1 个视频就触发 LLM 分析 → API 成本翻倍\n- 画像每轮都变 → 搜索词每轮都变 → 缓存命中率暴跌\n- 少量事件产生大量低质量假设 → 假设池膨胀 → 上下文窗口被噪声占满\n\n**面试表述建议**：\n> 「Memory 需要写入策略，因为频繁写入会导致 LLM 成本失控、噪声积累和状态不稳定。OpenBiliClaw 的 CognitionCycle 用双重节流（12 小时或 30 事件触发），有界批处理（300 事件/批，上限 900），单次重试。这确保了稳态运行零 LLM 调用（跳过记忆机制），只有积累足够证据时才触发深层分析。这是生产 Agent 的关键设计——不是每轮都学习，而是积累足够证据后才更新认知。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "Memory vs RAG",
+                "question": "长期记忆和用户画像有什么区别？OpenBiliClaw 的 SoulProfile 和 MemoryLayer 分别承担什么角色？",
+                "answer": "**答案**：\n\n**区别**：\n\n| 维度 | 用户画像（SoulProfile） | 长期记忆（MemoryLayer） |\n|------|----------------------|----------------------|\n| 内容 | 结构化的用户理解（兴趣、风格、特质） | 原始认知产出（假设、推测历史、澄清记录） |\n| 访问方式 | 整体读取，作为 LLM 输入 | 按需加载，按身份检索 |\n| 更新频率 | 每次画像管道运行后更新 | CognitionCycle 触发时更新 |\n| 用途 | 驱动推荐和发现 | 支撑画像更新的深层依据 |\n\n**OpenBiliClaw 的分工**：\n\n```\nSoulProfile（用户画像 = 提炼后的「你是谁」）：\n  - interests: 兴趣标签（trial/active/decaying/archived）\n  - cognitive_style: 认知风格\n  - humor_preference: 幽默偏好\n  - core_traits: 核心特质\n  - 用途：每次推荐/发现都读取\n\nMemoryLayer（长期记忆 = 支撑画像的「为什么」）：\n  - awareness_notes: 行为模式观察（「最近看了很多机械键盘」）\n  - insight_hypotheses: 深层假设（「对精密机械有审美偏好」）\n  - probe_feedback_history: 推测兴趣的验证/否定历史\n  - 用途：画像更新时读取，提供深层依据\n```\n\n**协同关系**：\n- MemoryLayer 提供证据 → SoulProfile 提炼为用户理解\n- SoulProfile 驱动推荐 → 推荐结果产生新行为 → 行为入 events → CognitionCycle 更新 MemoryLayer\n- 形成闭环：Memory → Profile → Recommendation → Behavior → Memory\n\n**面试表述建议**：\n> 「用户画像是提炼后的『你是谁』——兴趣、风格、特质，每次推荐都读取；长期记忆是支撑画像的『为什么』——行为模式观察、深层假设、推测历史，画像更新时读取。OpenBiliClaw 用 SoulProfile 驱动推荐，用 MemoryLayer 提供深层依据，两者形成闭环：Memory → Profile → Recommendation → Behavior → Memory。」"
+              }
+            }
+          ]
+        },
+        {
           "title": "面试准备总结",
           "anchor": "interview-summary",
           "groupTitle": "面试准备",
@@ -398,6 +537,18 @@
                   },
                   {
                     "content": "**评测体系题要关联 Evaluation Harness**——这是 Agent 方向的高频简历关键词。重点讲「受控环境 + 可复现 + 多维度 + 自动优化」四个特征。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**RAG 选型题要展示决策推理**——RAG vs 微调、RAG vs 长上下文不是「哪个更好」，而是「在什么约束下选什么」。OpenBiliClaw 选 RAG 因为知识频繁更新、需要可追溯、无训练数据。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**Memory vs RAG 题要抓住本质区别**——RAG 为查询找证据（查询结束即释放），Memory 为系统保持状态（跨会话持久化）。缓存是记忆的退化形式，可丢失可重建。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**Memory 写入策略题要展示成本意识**——不是每轮都写，而是双重节流（12 小时/30 事件触发）、有界批处理、单次重试。稳态运行零 LLM 调用是核心设计。",
                     "highlight": true
                   }
                 ]
