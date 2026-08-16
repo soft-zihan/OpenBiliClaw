@@ -255,6 +255,88 @@
           ]
         },
         {
+          "title": "RAG 深度面试题：嵌入选型、MMR、Agentic RAG 与成本优化",
+          "anchor": "interview-rag-deep",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 25,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 设计",
+                "question": "OpenBiliClaw 的嵌入缓存使用了两级架构（L1 内存 + L2 SQLite），并引入了 provenance 追踪和 OBLV 二进制格式。如果让你为 OpenBiliClaw 选择嵌入模型，你会考虑哪些因素？为什么选择本地 bge-m3 而非只用云端模型？",
+                "answer": "**答案**：\n\n**嵌入模型选型的核心因素**：\n\n1. **语言覆盖**：OpenBiliClaw 处理中文（B站、小红书、知乎）和英文（YouTube、Reddit、X）内容，模型必须支持多语言\n2. **向量维度与存储成本**：bge-m3 支持 1024 维，4096 维向量用 JSON 存储约 90 KiB/条，OBLV 二进制格式压缩到 ~16 KiB（压缩 82%）\n3. **延迟与成本**：本地 bge-m3 零 API 成本、毫秒级延迟，适合高频嵌入查询（每次推荐涉及数十次嵌入）；云端 DashScope 作为备选\n4. **多模态支持**：DashScope qwen3-vl-embedding 支持图像嵌入，用于封面视觉匹配\n5. **Provenance 安全**：切换模型后旧缓存自动失效（provenance 不匹配），防止不同维度向量混用\n\n**为什么本地 + 云端混合？**\n- 本地 bge-m3 处理热路径（兴趣标签去重、分类路由、候选池清理），零成本、零延迟\n- 云端 DashScope 处理冷路径或多模态场景（封面嵌入）\n- 故障降级：本地模型不可用时自动切换到云端\n\n**面试表述建议**：\n> 「我为嵌入系统设计了本地+云端混合架构。本地 bge-m3 处理高频热路径，零 API 成本；云端 DashScope 提供多模态能力。provenance 追踪确保切换模型后缓存安全失效，OBLV 二进制格式将存储压缩 82%。选型核心是语言覆盖、维度成本和多模态能力的平衡。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 设计",
+                "question": "MMR（Maximal Marginal Relevance）在 RAG 系统中解决什么问题？OpenBiliClaw 在搜索词生成中使用了 MMR，它的公式是什么？如果 λ 设得太低或太高会有什么问题？",
+                "answer": "**答案**：\n\n**MMR 解决的问题**：\n\n普通 Top-k 容易返回高度相似的结果。MMR 在每次选择时同时考虑**与查询的相关性**和**与已选集合的差异性**，在相关性和多样性之间权衡。\n\n**OpenBiliClaw 的 MMR 公式**：\n\n```pseudo\nmmr_score = 0.46 × novelty           // 与已选兴趣的差异度\n          + 0.27 × weight_score       // 归一化权重\n          + 0.19 × category_novelty   // 类别新颖度\n          + 0.08 × priority           // 基础优先级\n          - 0.48 × dislike_penalty    // 与不喜欢主题的相似度惩罚\n```\n\n**λ 的影响**：\n- λ 太高（偏向相关性）：搜索词集中在最强兴趣，召回内容同质化\n- λ 太低（偏向多样性）：搜索词偏离用户兴趣，召回内容不相关\n- OpenBiliClaw 的 0.46 novelty 权重体现了对多样性的重视，但 -0.48 dislike_penalty 确保不触碰用户明确不喜欢的方向\n\n**与 RAG 中 MMR 的对比**：\n- 传统 RAG：MMR 用于选择进入上下文的文档，避免重复 chunk\n- OpenBiliClaw：MMR 用于选择搜索词/兴趣标签，避免搜索方向同质化\n- 共同点：都是在「相关性」和「多样性」之间找平衡\n\n**面试表述建议**：\n> 「MMR 是 RAG 系统中控制多样性的经典算法。OpenBiliClaw 在搜索词生成中使用 MMR，权重设计体现了产品策略：novelty 0.46 确保搜索方向多样，dislike_penalty -0.48 确保不触碰用户禁忌。这与 RAG 中用 MMR 避免上下文重复 chunk 的思路一致——都是在有限预算内最大化信息覆盖。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 设计",
+                "question": "什么是 Agentic RAG？它与普通 RAG 有什么区别？OpenBiliClaw 的发现引擎是否可以看作一个 Agentic RAG 系统？",
+                "answer": "**答案**：\n\n**Agentic RAG 的定义**：\n\nAgentic RAG 是由具备状态、决策与工具调用能力的 Agent 动态规划检索过程的 RAG 范式。系统可根据中间证据选择数据源、改写或分解查询、迭代检索、验证答案，并在满足终止条件后生成结果。\n\n**普通 RAG vs Agentic RAG**：\n\n| 维度 | 普通 RAG | Agentic RAG |\n|------|---------|-------------|\n| 检索策略 | 固定的一次检索 | 可循环决策 |\n| 数据源 | 单一知识库 | 多源动态选择 |\n| 查询处理 | 固定查询 | 可改写/分解/迭代 |\n| 终止条件 | 检索完成即终止 | 证据评估后决定继续或停止 |\n\n**OpenBiliClaw 发现引擎 = Agentic RAG**：\n\n```pseudo\n// OpenBiliClaw 的 Agentic RAG 循环\n1. Plan: 根据用户画像生成搜索策略（5 大策略）\n2. Retrieve: 从 8 个平台检索候选内容\n3. Observe: LLM 评估每条候选的匹配度\n4. Evaluate: 检查证据是否充分（池子是否填满）\n5. Continue/Stop: 不足则触发 backfill（宽松版策略）\n6. 多样性压缩: MMR 思想确保推荐列表多样\n```\n\n**关键差异**：\n- 普通 RAG 是「一次检索→一次生成」\n- OpenBiliClaw 是「多策略并行检索→LLM 评估→结果不足则迭代补充→多样性压缩→最终推荐」\n- 有明确的终止条件（池子填满或达到预算上限）和降级机制（backfill）\n\n**面试表述建议**：\n> 「OpenBiliClaw 的发现引擎是一个典型的 Agentic RAG 系统。它不是简单的一次检索，而是根据用户画像动态规划搜索策略，从 8 个平台并行检索，用 LLM 评估证据质量，结果不足时自动触发补充检索，最终通过多样性压缩输出精品列表。这符合 Agentic RAG 的核心特征：状态感知、动态决策、迭代检索、明确终止。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 设计",
+                "question": "RAG 系统中不同阶段的 Top-k 应该如何选择？OpenBiliClaw 的五层漏斗中每一层的 k 值设计逻辑是什么？为什么不是越大越好？",
+                "answer": "**答案**：\n\n**Top-k 不是越大越好**：\n- 召回阶段增大 k 提高 Recall，但增加后续处理成本\n- 上下文阶段 k 过大引入噪声、稀释关键证据、触发 Lost in the Middle\n- 正确做法：在标注集上分别扫描各阶段 k，选满足质量门槛的最小预算\n\n**OpenBiliClaw 各阶段 k 值设计**：\n\n| 阶段 | k 值 | 设计逻辑 |\n|------|------|----------|\n| 关键词召回 | 5~10 个搜索词 | 25% 四象限分配，平衡覆盖与 API 成本 |\n| Embedding 预过滤 | 余弦 < 0.3 丢弃 | 过滤约 50% 明显不相关，节省 LLM 成本 |\n| LLM 批量评估 | 45 条/批，硬上限 90 | 平衡 LLM 上下文窗口与评估精度 |\n| 准入阈值 | confirmed ≥ 0.60, explore ≥ 0.58 | 简单可靠，explore 略低鼓励探索 |\n| 多样性压缩 | 最终 ~300 条入池 | per-source 保底 + 单来源最多 35% |\n\n**关键设计原则**：\n- **成本递增、精度递增**：Embedding 用最低成本处理大量候选，LLM 只处理值得深度分析的少量候选\n- **每层 k 值独立调优**：不是一把 k 用到底，而是每层有自己的最优值\n- **按 Query 难度动态调整**：冷启动时更分散，稳态时更精准\n\n**面试表述建议**：\n> 「RAG 系统中存在多个 k：召回 k、重排 k、上下文 k。OpenBiliClaw 的五层漏斗每层有独立的 k 值设计：搜索词 5~10 个平衡覆盖与成本，Embedding 预过滤用 0.3 阈值拦截 50% 不相关候选，LLM 批量评估 45 条/批平衡上下文与精度，准入阈值 0.60/0.58 平衡质量与探索，最终多样性压缩到 ~300 条。核心是成本递增、精度递增的漏斗设计。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "RAG 设计",
+                "question": "如何系统性优化 RAG 系统的延迟和成本？OpenBiliClaw 做了哪些优化？如果让你进一步优化，你会怎么做？",
+                "answer": "**答案**：\n\n**OpenBiliClaw 的成本优化措施**：\n\n1. **Prompt 分层缓存**：画像拆分为 5 个独立层，每层独立 SHA-256 摘要，未变化的层零 Token 消耗，稳态下 90% 画像 Token 被缓存\n2. **批量处理**：45 条候选一次 LLM 调用，32 个聚类一次去重判断\n3. **优先级调度**：用户可见操作（推荐表达）优先于后台任务（画像更新）\n4. **Embedding 预过滤**：用极低成本（向量余弦）提前过滤 50% 不相关候选，节省 LLM API 费用\n5. **Reasoning 控制**：结构化提取任务关闭 thinking 模式，节省推理 Token\n\n**进一步优化方向**：\n\n| 优化方向 | 具体措施 | 预期收益 |\n|----------|---------|----------|\n| 查询路由 | 简单查询用小模型，复杂查询用大模型 | 成本降低 30-50% |\n| 结果缓存 | 相同画像+相同池状态 → 复用推荐结果 | 热路径零 LLM 调用 |\n| 流式输出 | 推荐表达流式返回，降低首 Token 延迟 | 用户体验提升 |\n| 模型蒸馏 | 用大模型生成训练数据，小模型推理 | 成本降低 80%+ |\n\n**面试表述建议**：\n> 「OpenBiliClaw 的成本优化覆盖 Prompt 缓存、批量处理、优先级调度、Embedding 预过滤和 Reasoning 控制五个维度。进一步优化可以考虑查询路由（简单/复杂分流）、结果缓存（热路径复用）、流式输出（降低首 Token 延迟）和模型蒸馏（大模型教小模型）。核心是先做分阶段 trace 分解瓶颈，再针对性优化。」"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Agent 设计面试题：Workflow vs Agent、ReAct 映射与多 Agent 协作",
+          "anchor": "interview-agent-design",
+          "groupTitle": "面试准备",
+          "difficulty": "advanced",
+          "estimatedMinutes": 20,
+          "blocks": [
+            {
+              "type": "question",
+              "question": {
+                "category": "Agent 设计",
+                "question": "Workflow 和 Agent 有什么区别？OpenBiliClaw 是纯 Agent 架构还是混合架构？为什么这样设计？",
+                "answer": "**答案**：\n\n**Workflow vs Agent 的核心区别**：\n\n| 维度 | Workflow | Agent |\n|------|----------|-------|\n| 控制权 | 开发者预定义步骤 | 模型动态选择动作 |\n| 可测试性 | 容易测试和审计 | 不确定性高，测试困难 |\n| 成本 | 可预测 | Token 消耗不可预测 |\n| 适用场景 | 固定流程（报销、审批） | 开放任务（知识搜索、工具选择） |\n\n**OpenBiliClaw 是混合架构**：\n\n```pseudo\n// 确定性骨架（Workflow）\n启动顺序: Memory → Soul → Discovery → Recommendation\n6 个后台循环: 独立运行，互不阻塞\n五层画像管道: 事件→偏好→觉察→洞察→灵魂\n\n// Agent 决策点\n搜索词生成: LLM 根据画像动态生成 5~10 个搜索词\n内容评估: LLM 判断候选内容与用户的匹配度\n推测兴趣: LLM 基于心理学桥接逻辑猜测新兴趣\n对话系统: LLM 根据画像和上下文生成回复\n```\n\n**为什么这样设计？**\n- **数据管道用 Workflow**：画像更新、事件处理是固定流程，不需要动态决策\n- **内容理解用 Agent**：搜索词生成、内容评估需要语义理解，路径无法穷举\n- **关键路径用代码强制**：准入阈值、多样性压缩、IP 保护是确定性规则，不由模型决定\n\n**面试表述建议**：\n> 「OpenBiliClaw 采用『确定性骨架 + 局部 Agent 决策』的混合架构。数据管道、画像更新、后台循环是固定 Workflow，确保可预测性和可测试性；搜索词生成、内容评估、推测兴趣是 Agent 决策点，利用 LLM 的语义理解能力处理开放任务。关键安全边界（准入阈值、IP 保护）由代码强制，不交给模型决定。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "Agent 设计",
+                "question": "ReAct（Reasoning and Acting）是什么？OpenBiliClaw 的 CognitionCycle 与 ReAct 有什么联系和区别？",
+                "answer": "**答案**：\n\n**ReAct 的核心思想**：\n\nReAct 让模型交替进行推理（Reasoning）与动作（Acting）：Thought → Action → Observation → 下一轮。模型根据真实工具结果修正计划，而不是一次性生成完整答案。\n\n**CognitionCycle vs ReAct**：\n\n| 维度 | ReAct | CognitionCycle |\n|------|-------|----------------|\n| 循环粒度 | 单步（一次推理+一次动作） | 周期性批处理（12 小时或 30 事件） |\n| 动作类型 | 工具调用 | LLM 调用（Awareness/Insight 分析） |\n| 终止条件 | 找到答案即终止 | 有界上限（900 事件）+ 单次重试 |\n| 状态持久化 | 通常在内存 | watermark 游标持久化，崩溃可恢复 |\n\n**CognitionCycle 的 ReAct 映射**：\n\n```pseudo\n// ReAct 循环\nThought: 确定要处理的事件范围（watermark 游标）\nAction:  调用 LLM 分析 Awareness/Insight\nObserve: LLM 返回 AwarenessNote / InsightHypothesis\nFinal:   watermark 持久化，循环终止\n\n// CognitionCycle 的「有界」设计\n- 事件上限 900（_AWARENESS_BACKLOG_CAP）\n- 批大小 300，单次 LLM 调用不会超时\n- 单次重试（2 秒退避），不会无限重试\n- 12 小时节流，不会频繁调用\n```\n\n**关键区别**：\n- ReAct 是实时交互式循环，CognitionCycle 是周期性批处理循环\n- CognitionCycle 引入了 Checkpoint 思想（watermark），即使进程崩溃也能从断点恢复\n- CognitionCycle 的「有界」设计确保循环必然终止，是生产环境的必备模式\n\n**面试表述建议**：\n> 「CognitionCycle 借鉴了 ReAct 的推理-动作交替思想，但做了生产化改造：周期性批处理而非实时交互，watermark 游标实现崩溃恢复，有界上限确保循环必然终止。这是将学术范式转化为生产系统的典型实践。」"
+              }
+            },
+            {
+              "type": "question",
+              "question": {
+                "category": "Agent 设计",
+                "question": "OpenBiliClaw 的多 Agent 如何协作？如果让你设计一个多 Agent 系统，你会如何划分职责、设计通信机制和处理故障？",
+                "answer": "**答案**：\n\n**OpenBiliClaw 的 Agent 职责划分**：\n\n| Agent | 职责 | 依赖 |\n|-------|------|------|\n| MemoryManager | 事件入库、状态持久化 | 无 |\n| SoulEngine | 五层画像管道 | MemoryManager |\n| DiscoveryEngine | 内容发现（5 策略） | SoulEngine |\n| RecommendationEngine | 5 维评分、表达生成 | DiscoveryEngine |\n| Speculator | 推测兴趣、主动破茧 | SoulEngine |\n| Consolidator | 画像去重、标签合并 | SoulEngine |\n| PoolPurger | 候选池清理 | DiscoveryEngine |\n\n**通信机制**：\n- **同步调用**：Agent 之间通过方法调用直接通信（如 DiscoveryEngine 调用 SoulEngine 获取画像）\n- **异步事件**：通过 RuntimeEventHub 发布-订阅（如推荐完成后通知 UI 刷新）\n- **共享状态**：通过 SQLite 数据库和 JSON 文件共享状态（如 candidate_pool 表）\n\n**故障处理**：\n- **降级模式**：LLM 不可用时，推荐系统返回已缓存结果，对话返回友好提示\n- **独立循环**：6 个后台循环互不阻塞，一个慢循环不影响其他\n- **单次重试**：LLM 调用失败只重试一次，避免无限重试\n- **超时保护**：搜索执行有 IP 冷却计时器，避免持续触发限速\n\n**面试表述建议**：\n> 「OpenBiliClaw 的多 Agent 系统采用分层依赖拓扑：MemoryManager → SoulEngine → DiscoveryEngine → RecommendationEngine。通信机制包括同步调用、异步事件和共享状态三种模式。故障处理的核心是降级而非失败：LLM 不可用时返回缓存结果，搜索被限速时主动暂停等待，单个循环卡住不影响其他循环。这种设计确保了系统的鲁棒性。」"
+              }
+            }
+          ]
+        },
+        {
           "title": "面试准备总结",
           "anchor": "interview-summary",
           "groupTitle": "面试准备",
@@ -284,6 +366,18 @@
                   },
                   {
                     "content": "**RAG 题要理解两阶段模式**——Recall 追求高召回率（低阈值），Precision 追求高准确率（LLM 判断）。这是 RAG 系统的黄金模式。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**RAG 深度题要展示选型能力**——嵌入模型选型不是「哪个模型好」，而是「在语言覆盖、维度成本、多模态能力和故障降级约束下的最优解」。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**Agentic RAG 题要对比普通 RAG**——OpenBiliClaw 的发现引擎是典型的 Agentic RAG：状态感知、动态决策、迭代检索、明确终止。这是面试高频考点。",
+                    "highlight": true
+                  },
+                  {
+                    "content": "**Agent 设计题要区分 Workflow 和 Agent**——OpenBiliClaw 是混合架构：数据管道用 Workflow，内容理解用 Agent。关键安全边界由代码强制，不交给模型。",
                     "highlight": true
                   },
                   {
