@@ -163,6 +163,19 @@
               "text": "`llm/evaluation_wire.py` 定义了 LLM 批量评估的**确定性行级传输协议**。它确保评估输入/输出的格式一致性、可重现性和跨传输兼容性。\n\n### ROW-WIRE-V1 协议\n\n```python\nROW_WIRE_V1_HEADER = \"ROW-WIRE-V1\"\nROW_WIRE_V1_COLUMNS = (\n    \"id\", \"source_platform\", \"content_type\", \"mode\",\n    \"title\", \"author\", \"body_text\", \"description\",\n    \"duration\", \"view_count\", \"like_count\", ...\n)\n```\n\n### 关键设计\n\n1. **版本化协议**：新字段需要新版本号，而不是静默改变现有行的宽度或含义\n2. **严格验证**：`validate_canonical_evaluation_envelope()` 严格验证格式\n3. **确定性渲染**：相同输入产生相同 JSON，确保缓存和调试的一致性\n4. **稀疏表示**：只发送非空字段，减少 token 消耗\n\n### 与 eval_payload 的关系\n\n- `evaluation_wire.py`：底层传输协议（列定义、验证）\n- `eval_payload.py`：上层业务逻辑（批量构建、本地 ID 管理）"
             }
           ]
+        },
+        {
+          "title": "LLM 精判 vs Cross-Encoder Rerank：两种精排范式对比",
+          "anchor": "practice-llm-rerank",
+          "groupTitle": "LLM 大模型管理",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "面试官常问：「你们的 LLM 精判和 Cross-Encoder Rerank 有什么区别？」这是 RAG 系统精排环节的两种不同范式。\n\n### 两种精排范式对比\n\n| 维度 | Cross-Encoder Rerank | OpenBiliClaw LLM 精判 |\n|------|---------------------|---------------------|\n| **输入** | Query + 文档对 | 用户画像 + 候选内容 |\n| **输出** | 相关性分数（0~1） | keep/purge 决策 + 中文理由 |\n| **成本** | 每对一次推理（毫秒级） | 45 条一次批量调用（秒级） |\n| **可解释性** | 只有分数，无解释 | 有中文理由（「用户对精密机械审美偏好与…匹配」） |\n| **延迟** | 毫秒级 | 秒级（但批量处理摊薄） |\n| **上下文** | 只看 Query + 文档 | 看完整用户画像 + 候选内容 |\n\n### OpenBiliClaw 的 LLM 精判场景\n\n```\n候选池清理（pool_purge）：\n  Stage 1: 嵌入召回（阈值 0.55）→ ~50 条候选\n  Stage 2: LLM 精判 → keep/purge 决策 + 理由\n\n画像去重（consolidator）：\n  Stage 1: 嵌入聚类（阈值 0.85）→ ~100 簇\n  Stage 2: LLM 批量判断（32 簇/次）→ merge/keep 决策\n```\n\n### 关键差异：基于画像的深度理解\n\nOpenBiliClaw 的 LLM 精判不是简单的相关性排序，而是**基于用户画像的深度理解**——它不仅判断「是否相关」，还判断「是否匹配用户的深层偏好」。\n\n例如：用户不喜欢「营销文」，候选池中有「5分钟教你月入过万」。Cross-Encoder 可能给 0.3 分（语义不直接相关），但 LLM 精判能理解这是「营销文」的变体，给出 purge 决策。\n\n### 成本与精度的权衡\n\n| 方案 | 成本 | 精度 | 可解释性 |\n|------|------|------|----------|\n| 纯嵌入（无精排） | 最低 | 低 | 无 |\n| Cross-Encoder Rerank | 中 | 中 | 无 |\n| LLM 精判（OpenBiliClaw） | 高 | 高 | 有 |\n\nOpenBiliClaw 选择 LLM 精判的原因：推荐理由需要可解释（用户会问「为什么推荐这个？」）、需要基于深层画像做判断（不是简单的 Query-Document 匹配）、批量处理可以摊薄成本（45 条/批）。\n\n### 面试表述建议\n\n> 「OpenBiliClaw 的 LLM 精判本质上是一种 Rerank，但比传统 Cross-Encoder 更强：它不仅判断相关性，还基于用户画像做深度匹配。代价是延迟更高、成本更大，所以我们用批量处理（45 条/批）和 Prompt 缓存来控制成本。这是 RAG 系统中成本与精度的经典权衡。」"
+            }
+          ]
         }
       ]
     }

@@ -16,6 +16,14 @@
               "text": "`api/app.py` 是整个项目的 HTTP 入口，也是最大的单文件（16800+ 行）。它基于 FastAPI 框架（一个高性能的 Python Web 框架，自动处理请求解析、参数验证、API 文档生成等），提供了 REST API（基于 HTTP 的标准接口，浏览器通过 URL 访问来获取/提交数据）+ WebSocket（一种允许服务器主动推送消息给浏览器的网络协议，不同于传统的「浏览器请求→服务器响应」模式）的双通道服务。\n\n### 服务的客户端\n\n| 客户端 | 连接方式 | 主要用途 |\n|--------|---------|----------|\n| **浏览器插件** | HTTP API | 同步 Cookie、上报行为事件、获取推荐 |\n| **桌面端 Web** (`/web`) | HTTP + WebSocket | 大屏推荐首页、画像看板 |\n| **移动端 Web** (`/m`) | HTTP + WebSocket | 手机适配的推荐界面 |\n| **CLI 工具** | HTTP API | 执行管理操作 |\n\n### 为什么 `app.py` 有 16800+ 行？\n\n这是一个已知的技术债务。`app.py` 包含了所有 API 端点的路由定义、请求处理、业务逻辑，甚至部分数据访问逻辑。项目早期快速迭代时，拆分的优先级低于功能开发。理想状态应该按业务域拆分为 `api/routes/events.py`、`api/routes/recommendations.py` 等独立模块。"
             },
             {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart LR\n    subgraph TOTAL [OpenBiliClaw 总架构]\n        SRC[sources/]\n        style SRC fill:#e2e8f0,stroke:#94a3b8\n        SOUL[soul/]\n        style SOUL fill:#e2e8f0,stroke:#94a3b8\n        DISC[discovery/]\n        style DISC fill:#e2e8f0,stroke:#94a3b8\n        REC[recommendation/]\n        style REC fill:#e2e8f0,stroke:#94a3b8\n        LLM[llm/]\n        style LLM fill:#e2e8f0,stroke:#94a3b8\n        STORE[storage/]\n        style STORE fill:#e2e8f0,stroke:#94a3b8\n        RT[runtime/]\n        style RT fill:#e2e8f0,stroke:#94a3b8\n    end\n\n    subgraph APILAYER [api/ · 25,428 行 · 📖 本教程]\n        APP[app.py<br/>FastAPI · 132 路由]\n        WS2[/ws/runtime<br/>WebSocket 实时通道/]\n    end\n    style APILAYER fill:#fef3c7,stroke:#f59e0b,stroke-width:3px\n\n    subgraph CLIENTS [客户端]\n        EXT2[浏览器插件<br/>HTTP]\n        WEB2[桌面端/移动端<br/>HTTP + WS]\n        CLI2[CLI<br/>HTTP]\n        AGENT2[Agent Bridge<br/>HTTP]\n    end\n\n    EXT2 --> APP\n    WEB2 --> APP\n    WEB2 --> WS2\n    CLI2 --> APP\n    AGENT2 --> APP\n    APP --> SOUL\n    APP --> DISC\n    APP --> REC\n    APP --> STORE\n    RT -->|事件推送| WS2\n    WS2 -->|实时更新| WEB2",
+                "caption": "API 层在总架构中的位置：所有客户端的统一入口，REST + WebSocket 双通道连接前后端"
+              }
+            },
+            {
               "type": "code",
               "code": {
                 "language": "python",
@@ -41,6 +49,14 @@
             {
               "type": "text",
               "text": "### 端点分类\n\n`app.py` 定义了约 40+ 个端点，按业务域可分为以下几类："
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    subgraph REST [REST API 端点分组]\n        E1[/api/events/ingest<br/>行为上报 POST/]\n        E2[/api/recommendations/feed<br/>推荐列表 GET/]\n        E3[/api/delight/pending-batch<br/>惊喜推荐 GET/]\n        E4[/api/profile<br/>用户画像 GET/]\n        E5[/api/chat<br/>对话 POST/]\n        E6[/api/feedback<br/>反馈 POST/]\n        E7[/api/config<br/>配置 GET/POST/]\n        E8[/api/init/start<br/>引导初始化 POST/]\n        E9[/api/saved/*<br/>收藏同步/]\n        E10[/api/image-proxy<br/>图片代理 GET/]\n    end\n\n    subgraph WS [WebSocket 实时通道]\n        W1[/ws/runtime<br/>事件流订阅/]\n        W2[init_progress<br/>引导进度]\n        W3[recommendation_ready<br/>推荐就绪]\n        W4[profile_updated<br/>画像变化]\n    end\n\n    subgraph SECURITY [安全层]\n        AUTH[密码门禁<br/>scrypt 哈希]\n        CORS[CORS 控制]\n        DEGRADE[降级模式<br/>LLM 不可用时]\n    end\n\n    AUTH --> REST\n    CORS --> REST\n    DEGRADE -->|推荐降级<br/>返回缓存| E2\n    DEGRADE -->|对话降级<br/>友好提示| E5\n\n    E1 -->|事件入库| EVENTS[events 表]\n    E2 -->|读取候选池| POOL[candidate_pool]\n    E4 -->|读取画像| PROFILE[SoulProfile]\n    E5 -->|LLM 对话| LLMCHAT[llm/complete_chain]\n    E7 -->|热重载| CONFIG[config.toml]\n\n    WS --> W2\n    WS --> W3\n    WS --> W4",
+                "caption": "API 端点分层架构：REST 请求-响应 + WebSocket 实时推送 + 安全层与降级模式"
+              }
             },
             {
               "type": "table",

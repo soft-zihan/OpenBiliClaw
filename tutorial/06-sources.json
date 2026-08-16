@@ -16,6 +16,14 @@
               "text": "`sources/` 模块是 OpenBiliClaw 的「数据接入层」，负责从各平台获取用户行为数据和内容数据。它的核心设计目标是：**让上层代码不需要关心每个平台的差异**。\n\n### 统一协议设计\n\n`sources/protocol.py` 定义了所有平台 Adapter 必须实现的接口。每个 Adapter 封装了：\n- 如何获取用户行为数据（浏览历史、点赞、收藏等）\n- 如何搜索内容\n- 如何获取内容详情\n- 如何处理认证（Cookie / OAuth / API Key）\n\n`sources/registry.py` 负责注册和发现所有已配置的 Adapter，上层代码只需调用 Registry 的统一方法。"
             },
             {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart LR\n    subgraph Platforms[\"平台数据源（8 个）\"]\n        B[\"B站\\n官方API + Cookie\"]\n        XHS[\"小红书\\nPlaywright 浏览器\"]\n        DY[\"抖音\\nPlaywright 浏览器\"]\n        YT[\"YouTube\\nyt-dlp CLI\"]\n        X[\"X / Twitter\\n浏览器自动化\"]\n        ZH[\"知乎\\n公开API\"]\n        RD[\"Reddit\\n公开API\"]\n        WB[\"微博\\nCookie/API/浏览器\"]\n    end\n    subgraph Sources_HL[\"Sources 数据接入层 ★\"]\n        direction TB\n        Proto[\"统一 Protocol\"]\n        Reg[\"Adapter Registry\"]\n        EvtFmt[\"Event 归一化\"]\n        Proto --> Reg --> EvtFmt\n    end\n    subgraph Downstream[\"下游模块\"]\n        RT[\"Runtime\\n任务编排\"]\n        SL[\"Soul Engine\\n画像更新\"]\n        DISC[\"Discovery\\n内容发现\"]\n        API[\"API Server\\n前端推送\"]\n    end\n    Platforms --> Sources_HL\n    Sources_HL --> RT\n    Sources_HL --> SL\n    Sources_HL --> DISC\n    Sources_HL --> API\n    style Sources_HL fill:#fff3b0,stroke:#e6a800,stroke-width:3px",
+                "caption": "Sources 模块在 OpenBiliClaw 总架构中的位置：8 个平台通过不同接入方式汇入统一数据层，再分发给 Runtime、Soul、Discovery 和 API"
+              }
+            },
+            {
               "type": "table",
               "table": {
                 "headers": [
@@ -84,6 +92,14 @@
                     "keyPoint": "认证层独立于数据层——即使 Cookie 过期，数据获取层也能优雅降级"
                   }
                 ]
+              }
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    subgraph Protocol[\"统一 PlatformAdapter Protocol\"]\n        fetch_history[\"fetch_history()\"]\n        search[\"search()\"]\n        fetch_detail[\"fetch_detail()\"]\n        authenticate[\"authenticate()\"]\n    end\n    subgraph Bili[\"BilibiliAdapter\\n官方 API + Cookie\"]\n        B1[\"bilibili-api-python\"]\n        B2[\"Cookie 认证\\nQR 码登录\"]\n    end\n    subgraph XHS[\"XiaohongshuAdapter\\nPlaywright 浏览器\"]\n        X1[\"Playwright 自动化\"]\n        X2[\"扫码登录\\n反爬绕过\"]\n    end\n    subgraph V2EX[\"V2exAdapter\\n公开 API\"]\n        V1[\"REST API\\n无需认证\"]\n    end\n    subgraph Weibo[\"WeiboAdapter\\n三模式切换\"]\n        W1[\"Cookie 模式\"]\n        W2[\"API 模式\"]\n        W3[\"浏览器模式\"]\n    end\n    Protocol --> Bili\n    Protocol --> XHS\n    Protocol --> V2EX\n    Protocol --> Weibo\n    style Protocol fill:#e8f4fd,stroke:#2196F3,stroke-width:2px",
+                "caption": "策略模式：统一 Protocol 定义接口规范，各平台 Adapter 实现不同的数据获取策略（API/浏览器/CLI），上层代码无需感知差异"
               }
             }
           ]

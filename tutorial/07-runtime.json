@@ -14,6 +14,14 @@
             {
               "type": "text",
               "text": "`runtime/` 模块是 OpenBiliClaw 的「操作系统」——它负责协调所有后台任务、管理生命周期、以及连接各模块。\n\n### 核心组件\n\n- **InitCoordinator**：引导初始化流程，新用户首次启动时的四阶段引导\n- **TaskRegistry**：后台任务注册与调度\n- **EventHub**：运行时事件广播（发布-订阅）\n- **Producers**：各平台数据生产者（B站/小红书/抖音/YouTube/X/知乎/Reddit）\n- **SourceIncrementalSync**：浏览器插件在线时的周期性账户引导调度器\n- **FeedbackScheduler**：用户反馈处理调度\n- **InspirationPipeline**：灵感发现流水线\n- **KeywordPlanner**：搜索关键词规划\n- **OllamaSupervisor**：本地 Ollama 服务管理\n- **EmbeddingSeed**：向量嵌入模型初始化\n- **PoolGate**：候选池门控（控制发现频率）\n- **Updater**：后端自动更新管理"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart LR\n    subgraph TOTAL [OpenBiliClaw 总架构]\n        SRC[sources/<br/>8 个平台适配器]\n        style SRC fill:#e2e8f0,stroke:#94a3b8\n        SOUL[soul/<br/>SoulEngine<br/>35 子模块]\n        style SOUL fill:#e2e8f0,stroke:#94a3b8\n        DISC[discovery/<br/>DiscoveryEngine]\n        style DISC fill:#e2e8f0,stroke:#94a3b8\n        REC[recommendation/<br/>5 维评分]\n        style REC fill:#e2e8f0,stroke:#94a3b8\n        API[api/<br/>FastAPI · 132 路由]\n        style API fill:#e2e8f0,stroke:#94a3b8\n        LLM[llm/<br/>6 Provider]\n        style LLM fill:#e2e8f0,stroke:#94a3b8\n        STORE[storage/<br/>44 张表]\n        style STORE fill:#e2e8f0,stroke:#94a3b8\n    end\n\n    subgraph RUNTIME [runtime/ · 21,663 行 · 📖 本教程]\n        INIT[InitCoordinator<br/>4 阶段引导]\n        HUB[EventHub<br/>发布-订阅总线]\n        TASK[TaskRegistry<br/>后台任务调度]\n        PROD[Producers<br/>平台数据生产]\n        SYNC[SourceIncrementalSync<br/>周期引导]\n    end\n    style RUNTIME fill:#fef3c7,stroke:#f59e0b,stroke-width:3px\n\n    SRC --> PROD\n    PROD --> INIT\n    INIT --> SOUL\n    SOUL --> DISC\n    DISC --> REC\n    REC --> API\n    TASK --> PROD\n    TASK --> SOUL\n    TASK --> DISC\n    TASK --> REC\n    HUB -->|实时推送| API\n    SYNC --> PROD\n    LLM -.->|推理| SOUL\n    LLM -.->|推理| DISC\n    STORE -.->|持久化| RUNTIME",
+                "caption": "Runtime 在总架构中的位置：编排所有后台任务、连接各引擎、通过 EventHub 向前端推送实时事件"
+              }
             }
           ]
         },
@@ -91,6 +99,14 @@
             {
               "type": "text",
               "text": "`runtime/task_registry.py` 管理所有后台定时任务。系统使用 APScheduler 作为调度引擎，支持：\n\n- **定时内容抓取**：各平台 Producer 按配置的频率执行内容抓取\n- **画像更新**：Soul Engine 定期根据新数据更新用户画像\n- **推荐生成**：Recommendation Engine 定期从候选池生成新推荐\n- **灵感探索**：InspirationPipeline 定期执行探索性搜索\n- **候选池维护**：清理过期内容、去重、容量控制\n- **自动更新检查**：Updater 定期检查新版本\n\n`runtime/source_policy.py` 控制每个平台的数据抓取策略——频率、每日配额、并发限制等。"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    subgraph SCHEDULER [TaskRegistry + APScheduler]\n        REG[BackgroundTaskRegistry<br/>追踪所有 asyncio.Task<br/>支持热重载安全取消]\n    end\n\n    subgraph LOOPS [6 个独立后台循环]\n        L1[content_refresh<br/>内容刷新<br/>各 Producer 周期抓取]\n        L2[profile_update<br/>画像更新<br/>SoulEngine 12h 节流]\n        L3[discovery<br/>内容发现<br/>7 种搜索策略]\n        L4[recommendation<br/>推荐生成<br/>5 维评分+策展]\n        L5[proactive_push<br/>惊喜推送<br/>每 120s 检查 delight]\n        L6[source_sync<br/>增量同步<br/>插件在线时周期引导]\n    end\n\n    REG --> L1\n    REG --> L2\n    REG --> L3\n    REG --> L4\n    REG --> L5\n    REG --> L6\n\n    subgraph HUB [EventHub 事件总线]\n        PUB[publish 事件]\n        WS[WebSocket 推送]\n    end\n\n    L1 -->|抓取完成| PUB\n    L2 -->|画像更新| PUB\n    L4 -->|推荐就绪| PUB\n    L5 -->|惊喜通知| PUB\n    PUB --> WS\n    WS -->|实时推送| UI[Web UI / 插件]\n\n    subgraph INIT_FLOW [InitCoordinator 引导流程]\n        I1[阶段1: 拉取数据] --> I2[阶段2: 分析偏好]\n        I2 --> I3[阶段3: 生成画像]\n        I3 --> I4[阶段4: 首轮推荐]\n    end\n\n    L1 -.->|首次触发| INIT_FLOW",
+                "caption": "Runtime 后台任务调度全景：6 个独立循环 + EventHub 事件总线 + InitCoordinator 引导流程"
+              }
             },
             {
               "type": "code",

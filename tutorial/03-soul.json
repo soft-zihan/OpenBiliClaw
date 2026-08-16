@@ -16,6 +16,14 @@
               "text": "Soul Engine 是 OpenBiliClaw 最核心的模块，负责将用户的原始行为数据转化为深层次的人格画像。它不只是在做「标签匹配」，而是在尝试理解「你是一个什么样的人」。\n\n### 五层灵魂模型（Onion Layers）\n\n这套模型借鉴了心理学中的洋葱模型——从外到内，逐层深入：\n\n1. **事件层（Event）**：最外层，原始行为数据——你看了什么视频、点了什么赞、收藏了什么内容\n2. **偏好层（Preference）**：从事件中提取结构化偏好——兴趣标签、风格偏好、内容时长偏好\n3. **觉察层（Awareness）**：观察行为模式的变化——最近是不是对某类内容更感兴趣了？情绪状态如何？\n4. **洞察层（Insight）**：形成深层假设——你可能是 INTP 类型？你对「系统化思维」有深层需求？\n5. **灵魂层（Soul）**：最内层，整合所有信息——完整的人格素描、MBTI 推断、核心特质、深层需求"
             },
             {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart LR\n    SOURCES[\"Sources 数据源\"] --> RUNTIME[\"Runtime 运行时\"]\n    RUNTIME --> SOUL[\"Soul Engine 灵魂引擎\"]\n    SOUL --> DISCOVERY[\"Discovery 发现引擎\"]\n    SOUL --> RECOMMENDATION[\"Recommendation 推荐引擎\"]\n    DISCOVERY --> API[\"API 层\"]\n    RECOMMENDATION --> API\n    MEMORY[\"Memory 记忆\"] -.->|\"提供事件\"| SOUL\n    LLM[\"LLM 服务\"] -.->|\"提供分析能力\"| SOUL\n    STORAGE[\"Storage 存储\"] -.->|\"提供持久化\"| SOUL\n    style SOUL fill:#fbbf24,stroke:#f59e0b,stroke-width:3px",
+                "caption": "Soul Engine 在总架构中的位置：上游 Sources/Runtime 提供数据，下游 Discovery/Recommendation 消费画像，侧向依赖 Memory/LLM/Storage"
+              }
+            },
+            {
               "type": "text",
               "text": "**关键设计理念**：\n\n- **从行为推断心理，而非从标签匹配内容**——传统推荐系统从「你看过机械键盘」推断「你对电子产品感兴趣」。Soul Engine 会进一步推断「你对精密机械结构有审美偏好」，然后跨领域推荐建筑美学内容。\n- **层层递进，逐步深化**——不会一次性产出完整画像，而是随着行为数据的积累逐步加深理解。\n- **双向修正**——用户的反馈（喜欢/不喜欢/聊天）可以反向修正所有层的理解。如果你说「我不喜欢那种肤浅的科普」，系统会调整对「深度偏好」的权重。"
             }
@@ -173,6 +181,14 @@
                 "language": "python",
                 "content": "// analyze_events() 核心流程（伪代码）\n\nasync def analyze_events(events, existing_preference):\n    events = filter_events(events)  // 过滤满意度事件\n\n    // 关键设计：大批次自动拆分并发，避免单次 LLM 调用超时\n    if len(events) >= chunk_size:\n        return await analyze_chunked(events)  // 并发调用 LLM，逐层合并\n\n    // 单批次路径：构建 Prompt 并检查是否超出 token 预算\n    prompt = build_preference_analysis_prompt(events, existing_preference)\n\n    if prompt_chars > max_prompt_chars:\n        // Prompt 太长 → 自动拆分为适配窗口的 chunk\n        return await analyze_chunked(plan_fitting_chunks(events))\n\n    // 正常单批次分析\n    return await analyze_single(events)",
                 "caption": "analyze_events() 伪代码：自动分片并发 + Prompt 预算自适应"
+              }
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    EVENT[\"Event 事件层\\n输入: 原始行为事件 view/like/favorite/comment\\n输出: ProfileSignal\\n关键: signal_from_event()\"]\n    PREF[\"Preference 偏好层\\n输入: ProfileSignal 批次\\n输出: InterestTag + StylePreference\\n关键: PreferenceAnalyzer.analyze()\"]\n    AWARE[\"Awareness 觉察层\\n输入: 事件批次 最多900条\\n输出: AwarenessNote 行为模式观察\\n关键: AwarenessAnalyzer.analyze()\"]\n    INSIGHT[\"Insight 洞察层\\n输入: AwarenessNote 最多450条\\n输出: InsightHypothesis 深层假设\\n关键: InsightAnalyzer.analyze()\"]\n    SOUL_LAYER[\"Soul 灵魂层\\n输入: 所有层结果\\n输出: SoulProfile 完整画像\\n关键: ProfileConsolidator.consolidate()\"]\n    EVENT --> PREF\n    PREF --> AWARE\n    AWARE --> INSIGHT\n    INSIGHT --> SOUL_LAYER\n    COGNITION[\"CognitionCycle\\n12h 节流 + 早期触发\"]\n    COGNITION -.->|\"触发 Awareness + Insight 阶段\"| AWARE\n    COGNITION -.->|\"触发 Insight 阶段\"| INSIGHT",
+                "caption": "五层画像管道：Event → Preference → Awareness → Insight → Soul，CognitionCycle 控制 Awareness/Insight 层的 12h 节流更新"
               }
             }
           ]

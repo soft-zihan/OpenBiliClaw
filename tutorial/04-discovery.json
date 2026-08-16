@@ -291,6 +291,19 @@
           ]
         },
         {
+          "title": "混合检索思想与 Query Rewrite 风险",
+          "anchor": "practice-discovery-hybrid-rewrite",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "advanced",
+          "estimatedMinutes": 10,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "### 混合检索思想：Dense + Sparse 互补\n\n生产 RAG 系统通常需要 Dense（嵌入向量）+ Sparse（关键词/BM25）混合检索。Dense 擅长语义匹配，Sparse 擅长精确术语。OpenBiliClaw 虽然没有显式的 BM25，但在多处体现了混合检索思想：\n\n| 场景 | Sparse 思想（精确匹配） | Dense 思想（语义匹配） |\n|------|----------------------|---------------------|\n| 候选池清理（pool_purge） | Stage 1: 字符串精确匹配 topic_key/topic_group | Stage 2: 嵌入召回 + LLM 精判 |\n| 发现引擎 | related_chain: 相关推荐链（链接关系） | search: LLM 生成语义搜索词 |\n| 负样本去重 | 标题前 20 字符精确匹配 | 嵌入余弦相似度 |\n\n核心思想：**精确匹配处理确定性场景，语义匹配处理开放性场景，两者互补而非替代**。\n\n### Query Rewrite 的目的与风险\n\nQuery Rewrite 将用户输入转换为更适合搜索的查询表示。OpenBiliClaw 的搜索词生成是**高级 Query Rewrite**：基于用户画像生成 5~10 个搜索词，用 25% 四象限分配保证多样性。\n\n**Query Rewrite 的四大风险**：\n\n| 风险 | 示例 | OpenBiliClaw 的防护 |\n|------|------|-------------------|\n| **丢失否定词** | 「不要推荐游戏」→「游戏推荐」 | `disliked_topics` 硬过滤，不依赖语义改写 |\n| **引入幻觉实体** | 模型编造不存在的版本号 | 画像裁剪只保留稳定字段（interests/style） |\n| **过度扩写** | 改写结果偏离原始意图 | 缓存稳定性：相同画像+池状态 → 复用搜索词 |\n| **主题污染** | 旧对话主题带入当前检索 | MMR 多样性：避免搜索词集中在最强兴趣 |\n\n**关键洞察**：Query Rewrite 不是简单的文本改写，而是**在保留原始意图的前提下提升可检索性**。OpenBiliClaw 用画像裁剪 + 缓存稳定性 + MMR 多样性 + 防风暴机制四重防护，确保搜索词质量。"
+            }
+          ]
+        },
+        {
           "title": "模块总结：关键指标与设计亮点",
           "anchor": "practice-discovery-summary",
           "groupTitle": "Discovery Engine 发现引擎",

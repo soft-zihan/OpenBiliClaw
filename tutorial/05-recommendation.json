@@ -16,6 +16,14 @@
               "text": "Recommendation Engine 是内容管线的最后一站。Discovery Engine 负责「找到什么」，Recommendation Engine 负责「如何呈现」。\n\n### 核心职责\n\n1. **排序（Ranking）**：对候选池中的内容进行个性化排序\n2. **表达（Expression）**：为每个推荐生成「朋友式」的推荐理由\n3. **策展（Curation）**：选择最终展示给用户的内容组合\n4. **视觉匹配**：利用封面图像的多模态嵌入与用户审美偏好匹配\n5. **惊喜评分（Delight Scoring）**：评估内容能给用户带来多大程度的「惊喜感」\n\n### 从发现到推荐的完整链路\n\n理解推荐引擎之前，需要先清楚它接收的输入从哪来：\n\n| 阶段 | 负责模块 | 输出 |\n|------|---------|------|\n| 五层漏斗过滤 | Discovery Engine | 带 relevance_score + topic_group + style_key 的候选列表 |\n| 入池 | candidate_pool | 去重、老化、容量控制后的推荐池 |\n| 排序 + 表达 + 策展 | **Recommendation Engine** | 最终呈现给用户的推荐列表 |"
             },
             {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart LR\n    Sources[\"sources/\\nB站/YouTube/小红书/...\"] --> Runtime[\"runtime/\\n内容获取与缓存\"]\n    Runtime --> Soul[\"soul/\\n用户画像构建\"]\n    Runtime --> Discovery[\"discovery/\\n五层漏斗过滤\"]\n    Discovery -->|候选池| RE[\"Recommendation Engine\\n排序+表达+策展\"]\n    Soul -->|用户画像| RE\n    RE -->|推荐卡片| API[\"api/\\n前端接口\"]\n    API --> User[\"用户\"]\n\n    style RE fill:#4A90D9,color:#fff",
+                "caption": "推荐引擎在数据管线中的位置：接收候选池和用户画像，输出推荐卡片"
+              }
+            },
+            {
               "type": "text",
               "text": "### 为什么推荐需要「表达」？\n\n传统推荐系统的推荐理由通常是「猜你喜欢」或「因为你看了XX」。OpenBiliClaw 的目标是像朋友一样推荐——它应该能说出「我觉得你会喜欢这个视频，因为你对精密机械结构的审美偏好，在这个建筑纪录片里能找到共鸣」。\n\n这种表达不是简单的模板填充，而是由 LLM 基于用户画像和内容特征**动态生成**的。"
             }
@@ -77,6 +85,14 @@
                 "language": "python",
                 "content": "# recommendation/engine.py — serve_with_result() 核心入口\n# 所有推荐路径（generate/reshuffle/append）最终汇聚于此\n\nasync def _serve_with_result_unlocked(\n    self,\n    profile: SoulProfile,\n    *,\n    limit: int,\n    excluded_bvids: frozenset[str],\n    expression_mode: Literal[\"realtime\", \"precomputed\"] = \"precomputed\",\n    source_platform: str = \"\",\n) -> ServeResult:\n    \"\"\"统一推荐入口——只从候选池中选取。\n    \n    推荐引擎完全与 Discovery 解耦：只从 content_cache 的\n    候选池读取，不直接调用发现引擎。\n    \"\"\"\n    # 候选数量策略：翻页时 multiplier=4，首次 multiplier=3\n    # 确保有足够候选经过排序/过滤后仍能凑够 limit 条\n    multiplier = 4 if excluded_bvids else 3\n    candidate_limit = max(limit * multiplier, 40) + len(excluded_bvids)\n\n    # 加载池快照：一次性读取候选行 + 历史记录\n    snapshot = await self._database.load_pool_serve_snapshot_async(\n        limit=candidate_limit,\n        xhs_self_nickname=self._xhs_self_nickname(),\n        curator_history_limit=history_limit,\n    )\n    candidates = self._enforce_platform_scope(\n        self._rows_to_discovered(list(snapshot.candidate_rows)),\n        scope,\n    )\n    # 平台范围强制检查：scoped 请求绝不能泄漏其他平台的内容\n    # 使用 source_family（与存储计数同一函数）而非 source_platform\n    # 因为遗留行的 platform 可能为空，默认 bilibili 会误判\n\n    # 后续流程：PoolCurator 评分 → 即时不喜欢过滤 → 表达生成 → 返回",
                 "caption": "recommendation/engine.py — _serve_with_result_unlocked()：统一推荐入口，与 Discovery 完全解耦"
+              }
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart TB\n    Pool[\"候选池\\ncandidate_pool\"] --> Scoring[\"5 维评分\\nRelevance 0.30 | Novelty 0.20\\nDiversity: -fatigue 0.25 -monotony 0.15\\nSerendipity +0.20\"]\n    Scoring --> Delight[\"Delight Scorer\\n惊喜评分 = 相关性×0.4 + 新颖度×0.3\\n+ 深度匹配×0.2 + 视觉加成×0.1\"]\n    Delight --> Visual[\"视觉加成\\n封面多模态嵌入\\nmax +0.05\"]\n    Visual --> Filter[\"即时不喜欢过滤\\nexclusion.py\\n精确+模糊双层匹配\"]\n    Filter --> Curator[\"PoolCurator 策展\\n多样性/新鲜度/惊喜比例\\n放大保护 ≤25%\"]\n    Curator --> Tone[\"ToneProfile 语气控制\\ndensity | warmth\\nplayfulness | directness\"]\n    Tone --> LLM[\"LLM 表达 Prompt 生成\\n个性化推荐理由\\n朋友式表达\"]\n    LLM --> Output[\"推荐输出\\n推荐卡片 → API → 用户\"]",
+                "caption": "推荐引擎内部完整流程：从候选池到推荐输出的 7 步管线"
               }
             }
           ]

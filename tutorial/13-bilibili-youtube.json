@@ -14,6 +14,14 @@
             {
               "type": "text",
               "text": "B 站和 YouTube 是 OpenBiliClaw 最早支持的两个视频平台，也是架构最成熟的两个适配器。它们代表了两种截然不同的数据接入范式：\n\n| 维度 | B 站 | YouTube |\n|------|------|---------|\n| **数据获取** | 官方 API（bilibili-api-python） | yt-dlp 元数据提取 + scrapetube |\n| **认证方式** | Cookie 认证 + QR 码登录 | 无需登录（公开数据） |\n| **反爬策略** | API 限频 + Cookie 有效期 | IP 限频 + 签名验证 |\n| **数据格式** | 结构化 JSON API | 网页元数据解析 |\n| **特殊功能** | 弹幕、投币、收藏夹 | Google Takeout 历史导入 |\n\n这种差异正是 **Adapter 模式**存在的理由——上层代码（Discovery Engine、Soul Engine）不需要关心底层实现，只需要消费统一的 Event 格式。"
+            },
+            {
+              "type": "diagram",
+              "diagram": {
+                "language": "mermaid",
+                "content": "flowchart LR\n    subgraph TOTAL [OpenBiliClaw 总架构]\n        SOUL[soul/]\n        style SOUL fill:#e2e8f0,stroke:#94a3b8\n        DISC[discovery/]\n        style DISC fill:#e2e8f0,stroke:#94a3b8\n        REC[recommendation/]\n        style REC fill:#e2e8f0,stroke:#94a3b8\n        API[api/]\n        style API fill:#e2e8f0,stroke:#94a3b8\n        RT[runtime/]\n        style RT fill:#e2e8f0,stroke:#94a3b8\n        MEM[memory/]\n        style MEM fill:#e2e8f0,stroke:#94a3b8\n    end\n\n    subgraph BY [bilibili/ + youtube/ · 📖 本教程]\n        BAPI[bilibili/api.py<br/>BilibiliAPIClient<br/>Cookie 认证 + 弹幕]\n        BFAV[bilibili/favorites.py<br/>收藏夹抓取]\n        YTD[youtube/downloader.py<br/>yt-dlp 元数据提取]\n        YTIMP[youtube/takeout.py<br/>Google Takeout 导入]\n    end\n    style BY fill:#fef3c7,stroke:#f59e0b,stroke-width:3px\n\n    subgraph SOURCES [sources/ 统一适配层]\n        BADPT[sources/bilibili_adapter.py]\n        YADPT[sources/youtube_adapter.py]\n        PROTO[Protocol 统一接口]\n    end\n\n    BAPI --> BADPT\n    BFAV --> BADPT\n    YTD --> YADPT\n    YTIMP --> YADPT\n    BADPT --> PROTO\n    YADPT --> PROTO\n    PROTO -->|统一 Event| RT\n    RT --> MEM\n    MEM --> SOUL\n    SOUL --> DISC\n    DISC --> REC",
+                "caption": "Bilibili & YouTube 在总架构中的位置：通过 sources/ 统一适配层接入，上层引擎消费标准 Event 格式"
+              }
             }
           ]
         },
