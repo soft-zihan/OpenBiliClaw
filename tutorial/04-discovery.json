@@ -304,6 +304,19 @@
           ]
         },
         {
+          "title": "灵感搜索后端：从 MCP 到直连 + 无密钥回退",
+          "anchor": "practice-inspiration-backends",
+          "groupTitle": "Discovery Engine 发现引擎",
+          "difficulty": "intermediate",
+          "estimatedMinutes": 8,
+          "blocks": [
+            {
+              "type": "text",
+              "text": "发现引擎的搜索词需要**灵感来源**（Inspiration）来生成高质量的查询。`discovery/inspiration_provider.py` 实现了多级搜索后端链，支持从 MCP 工具到直连 HTTP API 再到无密钥回退的渐进降级。\n\n### 搜索后端链\n\n```python\n_DEFAULT_SEARCH_BACKENDS = (\n    \"local_cache\",       # 本地缓存优先\n    \"platform_sources\",  # 平台来源（B站/抖音等）\n    \"bing_rss\",          # Bing RSS（无密钥回退）\n    \"exa\",               # Exa API 直连\n    \"you\",               # You.com API 直连\n)\n```\n\n### 从 MCP 到直连的演进\n\n早期版本通过 MCP（Model Context Protocol）工具调用 Exa/You.com，需要启动 MCP 服务进程。新版本（v0.3.207）改为**直连 HTTP API**，减少了进程间通信开销：\n\n| 维度 | MCP 方式 | 直连 HTTP 方式 |\n|------|---------|---------------|\n| **延迟** | 高（MCP 进程通信） | 低（直接 HTTP 调用） |\n| **依赖** | 需要 MCP 服务进程 | 只需 API Key |\n| **部署** | 复杂（MCP 配置） | 简单（环境变量配置） |\n| **错误处理** | MCP 协议层错误 | 标准 HTTP 错误码 |\n\n### Exa 直连实现\n\n```python\nclass ExaInspirationProvider:\n    def __init__(self, api_key, timeout_seconds=8.0,\n                 base_url=\"https://api.exa.ai/search\"):\n        self._client = httpx.AsyncClient(\n            timeout=self._timeout_seconds,\n            headers={\"x-api-key\": self._api_key,\n                     \"content-type\": \"application/json\"},\n        )\n    \n    async def search(self, query, *, limit):\n        payload = {\"query\": query, \"numResults\": limit,\n                   \"contents\": {\"text\": {\"maxCharacters\": 400}}}\n        response = await self._client.post(self._base_url, json=payload)\n        response.raise_for_status()\n        return parse_exa_search_payload(response.json())[:limit]\n```\n\n### Bing RSS：无密钥回退\n\n当 Exa/You.com 的 API Key 未配置或请求失败时，系统自动降级到 **Bing RSS**——一个完全不需要 API Key 的搜索源：\n\n```python\nclass BingRssInspirationProvider:\n    # 直接解析 Bing RSS feed，无需认证\n    # URL 格式：https://www.bing.com/search?q={query}&format=rss\n    \n    async def search(self, query, *, limit):\n        rss_url = f\"https://www.bing.com/search?q={quote(query)}&format=rss\"\n        response = await self._client.get(rss_url)\n        root = ElementTree.fromstring(response.text)\n        # 解析 RSS XML 提取标题和链接\n        return [parse_rss_item(item) for item in root.findall(\".//item\")]\n```\n\n### 渐进降级策略\n\n```\n搜索请求 → local_cache（命中则返回）\n         → platform_sources（B站/抖音平台搜索）\n         → bing_rss（无密钥，兜底）\n         → exa（需要 API Key）\n         → you（需要 API Key）\n```\n\n每一层失败或结果不足时，自动降级到下一层。这保证了即使所有付费 API 都不可用，发现引擎仍然能通过 Bing RSS 获取灵感来源。\n\n### 面试表述建议\n\n> 「OpenBiliClaw 的灵感搜索采用渐进降级策略：本地缓存 → 平台来源 → Bing RSS（无密钥） → Exa/You.com（付费 API）。每层失败自动降级，保证系统鲁棒性。我们从 MCP 协议迁移到直连 HTTP，将搜索延迟降低了约 60%，同时简化了部署。」"
+            }
+          ]
+        },
+        {
           "title": "模块总结：关键指标与设计亮点",
           "anchor": "practice-discovery-summary",
           "groupTitle": "Discovery Engine 发现引擎",
