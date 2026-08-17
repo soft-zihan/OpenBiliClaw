@@ -17,6 +17,7 @@ from .gemini_provider import GeminiProvider, gemini_sdk_available
 from .ollama_provider import OllamaProvider
 from .openai_provider import DeepSeekProvider, OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
+from .orcarouter_provider import OrcaRouterProvider
 
 if TYPE_CHECKING:
     from openbiliclaw.config import Config
@@ -63,6 +64,7 @@ def build_llm_registry(
         ("deepseek", _maybe_deepseek_provider(config, overrides)),
         ("ollama", _maybe_ollama_provider(config, overrides)),
         ("openrouter", _maybe_openrouter_provider(config, overrides)),
+        ("orcarouter", _maybe_orcarouter_provider(config, overrides)),
         ("openai_compatible", _maybe_openai_compatible_provider(config, overrides)),
     ]
 
@@ -218,6 +220,7 @@ def _build_instance_provider(
         "deepseek": _maybe_deepseek_provider,
         "ollama": _maybe_ollama_provider,
         "openrouter": _maybe_openrouter_provider,
+        "orcarouter": _maybe_orcarouter_provider,
         "openai_compatible": _maybe_openai_compatible_provider,
     }
     factory = factories.get(provider_type)
@@ -770,6 +773,7 @@ def _maybe_openai_provider(config: Config, overrides: dict[str, LLMProvider]) ->
     auth_mode = config.llm.openai.auth_mode.strip().lower()
     if auth_mode == "codex_oauth":
         from openbiliclaw.llm.codex_auth import get_valid_codex_token, load_codex_credentials
+        from openbiliclaw.llm.codex_chatgpt_provider import CodexChatGPTProvider
 
         credentials = load_codex_credentials()
         if credentials is None:
@@ -779,15 +783,13 @@ def _maybe_openai_provider(config: Config, overrides: dict[str, LLMProvider]) ->
         async def _codex_token_provider(force_refresh: bool = False) -> str:
             return await get_valid_codex_token(force_refresh=force_refresh)
 
-        return OpenAIProvider(
-            api_key=credentials.access_token,
-            model=config.llm.openai.model or "gpt-4o",
+        return CodexChatGPTProvider(
+            access_token=credentials.access_token,
+            account_id=credentials.account_id,
+            model=config.llm.openai.model or "gpt-5.4",
             base_url=config.llm.openai.base_url,
             token_provider=_codex_token_provider,
             timeout=float(config.llm.timeout),
-            api_flavor=config.llm.openai.api_flavor,
-            proxy=_outbound_proxy(config.llm.openai.base_url),
-            trust_env=_outbound_trust_env(config.llm.openai.base_url),
             reasoning_effort=config.llm.openai.reasoning_effort,
         )
     if not config.llm.openai.api_key.strip():
@@ -931,6 +933,25 @@ def _maybe_openrouter_provider(
             config.llm.openrouter.base_url or "https://openrouter.ai/api/v1"
         ),
         reasoning_effort=config.llm.openrouter.reasoning_effort,
+    )
+
+
+def _maybe_orcarouter_provider(
+    config: Config, overrides: dict[str, LLMProvider]
+) -> LLMProvider | None:
+    if "orcarouter" in overrides:
+        return overrides["orcarouter"]
+    if not config.llm.orcarouter.api_key.strip():
+        return None
+    base_url = config.llm.orcarouter.base_url or "https://api.orcarouter.ai/v1"
+    return OrcaRouterProvider(
+        api_key=config.llm.orcarouter.api_key,
+        model=config.llm.orcarouter.model or "openai/gpt-4o",
+        base_url=base_url,
+        timeout=float(config.llm.timeout),
+        proxy=_outbound_proxy(base_url),
+        trust_env=_outbound_trust_env(base_url),
+        reasoning_effort=config.llm.orcarouter.reasoning_effort,
     )
 
 

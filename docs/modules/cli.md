@@ -23,7 +23,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `health-check` | 检查 LLM Provider 可用性 | ✅ |
 | `auth login` | 设置并验证 B 站 Cookie | ✅ |
 | `auth status` | 查看认证状态 | ✅ |
-| `login codex` | 导入 / 查看 / 删除 Codex CLI 的 ChatGPT OAuth 凭据（实验） | ✅ |
+| `login codex` | 导入 / 探测 / 查看 / 删除 Codex CLI 的 ChatGPT OAuth 凭据（实验） | ✅ |
 | `browser status` | 检查 agent-browser 安装 | ✅ |
 | `browser open <url>` | 通过浏览器打开页面 | ✅ |
 | `browser content <url>` | 获取页面文本内容 | ✅ |
@@ -257,12 +257,21 @@ $ openbiliclaw login codex --import
 # 从指定路径导入
 $ openbiliclaw login codex --import --source ~/.codex/auth.json
 
-# 查看状态；不会显示 token 明文
+# 查看状态；不会显示 token 明文，且会展示最近一次 LLM 能力探测结果
 $ openbiliclaw login codex --status
+
+# 查看状态并立即执行一次真实 LLM 能力探测（结果写回本地凭据文件）
+$ openbiliclaw login codex --status --probe
 
 # 删除 OpenBiliClaw 本地副本，不会删除 Codex CLI 自己的登录态
 $ openbiliclaw login codex --logout
 ```
+
+`login codex --import` 会在导入后自动执行一次真实 LLM 能力探测（模型取自当前
+`[llm.openai].model`；留空时自动从 `chatgpt.com/backend-api/codex/models`
+发现账号可用的 Codex 后端模型，发现失败则回退 `gpt-5.4`），并把结果持久化到
+本地凭据文件；若令牌只能登录 Codex CLI、不能调用 LLM 传输层，CLI 会明确提示
+改用 OpenAI Platform API Key，而不是等到 init 才遇到 401。
 
 启用方式：
 
@@ -274,10 +283,14 @@ enabled = true
 auth_mode = "codex_oauth"
 api_key = ""
 base_url = ""
-model = "gpt-5-nano"
+model = "gpt-5.4"
 ```
 
-这是非官方实验路径，OpenAI / Codex CLI 可能随时调整 token 权限或文件格式。`codex_oauth` 下 `base_url` 只能留空或指向 OpenAI 官方 API 域名，避免把 ChatGPT OAuth token 发给第三方代理。
+> Codex OAuth 通道要求 Codex 后端模型（如 `gpt-5.4` / `gpt-5.5` /
+> `gpt-5.6-*` / `gpt-5.3-codex-spark`），Platform API 模型（如
+> `gpt-5-nano`）会被该通道以 HTTP 400 拒绝。
+
+这是非官方实验路径，OpenAI / Codex CLI 可能随时调整 token 权限或文件格式。`codex_oauth` 下 `base_url` 只能留空或指向官方 Codex 传输端点 `https://chatgpt.com/backend-api`；请求走官方 Codex CLI 同款 `backend-api/codex/responses` 通道，不会把 ChatGPT OAuth token 发给第三方代理或 `api.openai.com`。
 
 ### `openbiliclaw browser status`
 
@@ -800,13 +813,14 @@ OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。
  4   Gemini 官方                           默认 gemini-2.5-flash (稳定 / 便宜)。Google AI Studio 申请 Key,免费档每天 1500 次够用
  5   Claude 官方                           默认 claude-sonnet-4-6。Anthropic console,按 token 付费,质量高
  6   OpenRouter 聚合                       默认 openai/gpt-5-nano。一个 Key 跑多家模型,按调用计费
+ 7   OrcaRouter 聚合                       默认 openai/gpt-4o。一个 Key 跑 150+ 模型,网关级零信任安全
 
 Tip:不确定就选 1 (DeepSeek),¥0.001/千 token 几乎免费,月度通常 ¥0.5-2。已经买了中转站 / OneAPI Key 选 2 (协议兼容)。本地 Ollama 仅用于向量检索(embedding),不作为聊天服务商;如需本地聊天模型请到设置页手动配置。
 
 请输入序号或名称（默认 1=DeepSeek） [1]:
 
 # (随后只问被选中那一项实际需要的字段——
-#  例如选 1/3/4/5/6: 只问 API Key + 模型名；
+#  例如选 1/3/4/5/6/7: 只问 API Key + 模型名；
 #  选 2: 进协议兼容 preset 子菜单，按需问 Base URL + API Key + 模型名)
 #
 # 注意（v0.3.176+）：本地 Ollama 已不再出现在聊天 provider 菜单里——随装的
